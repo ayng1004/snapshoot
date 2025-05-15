@@ -1,0 +1,64 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "auth-db",
+      "Group": "Snapshoot",
+      "Host": "auth-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    },
+    "2": {
+      "Name": "chat-db",
+      "Group": "Snapshoot",
+      "Host": "chat-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    },
+    "3": {
+      "Name": "media-db",
+      "Group": "Snapshoot",
+      "Host": "media-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    },
+    "4": {
+      "Name": "geo-db",
+      "Group": "Snapshoot",
+      "Host": "geo-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    },
+    "5": {
+      "Name": "story-db",
+      "Group": "Snapshoot",
+      "Host": "story-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    },
+    "6": {
+      "Name": "notification-db",
+      "Group": "Snapshoot",
+      "Host": "notification-db",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpassfile"
+    }
+  }
+}

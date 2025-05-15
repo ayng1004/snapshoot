@@ -1,0 +1,26 @@
+{
+  "name": "geo-service",
+  "version": "1.0.0",
+  "description": "SnapShoot Geo Service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "sequelize": "^6.28.0",
+    "pg": "^8.9.0",
+    "pg-hstore": "^2.3.4",
+    "redis": "^4.6.5",
+    "jsonwebtoken": "^9.0.0",
+    "cors": "^2.8.5",
+    "helmet": "^6.0.1",
+    "morgan": "^1.10.0",
+    "winston": "^3.8.2",
+    "axios": "^1.3.4"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  }
+}

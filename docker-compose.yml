@@ -1,0 +1,324 @@
+version: '3.8'
+
+
+services:
+  # API Gateway
+  # API Gateway
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8080:80"
+    # Simplifier les dépendances, sans condition de santé
+    depends_on:
+      - auth-service
+      - chat-service
+      - geo-service
+      - media-service
+      - notification-service
+      - story-service
+    networks:
+      - snapshoot-network
+    restart: on-failure
+
+  # Service d'authentification
+  auth-service:
+    build: ./services/auth-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_HOST=auth-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=auth_db
+      - JWT_SECRET=your_jwt_secret
+      - JWT_EXPIRES_IN=7d
+    depends_on:
+      - auth-db
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service de messagerie
+  chat-service:
+    build: ./services/chat-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_HOST=chat-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=chat_db
+      - JWT_SECRET=your_jwt_secret
+      - AUTH_SERVICE_URL=http://auth-service:3000
+    depends_on:
+      - chat-db
+      - auth-service
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service de médias
+  media-service:
+    build: ./services/media-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - DB_HOST=media-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=media_db
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - JWT_SECRET=your_jwt_secret
+      - AUTH_SERVICE_URL=http://auth-service:3000
+    volumes:
+      - media-uploads:/app/uploads
+    depends_on:
+      - media-db
+      - minio
+      - auth-service
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service de géolocalisation
+  geo-service:
+    build: ./services/geo-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - DB_HOST=geo-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=geo_db
+      - REDIS_HOST=redis
+      - JWT_SECRET=your_jwt_secret
+      - AUTH_SERVICE_URL=http://auth-service:3000
+    depends_on:
+      - geo-db
+      - redis
+      - auth-service
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service de stories
+  story-service:
+    build: ./services/story-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - DB_HOST=story-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=story_db
+      - JWT_SECRET=your_jwt_secret
+      - AUTH_SERVICE_URL=http://auth-service:3000
+      - GEO_SERVICE_URL=http://geo-service:3003
+      - MEDIA_SERVICE_URL=http://media-service:3002
+    depends_on:
+      - story-db
+      - auth-service
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service de notifications
+  notification-service:
+    build: ./services/notification-service
+    environment:
+      - NODE_ENV=production
+      - PORT=3005
+      - DB_HOST=notification-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=notification_db
+      - REDIS_HOST=redis
+      - JWT_SECRET=your_jwt_secret
+      - AUTH_SERVICE_URL=http://auth-service:3000
+    ports:
+      - "3005:3005"
+    depends_on:
+      - notification-db
+      - redis
+      - auth-service
+    networks:
+      - snapshoot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+
+  # Bases de données PostgreSQL
+  auth-db:
+    image: postgres:14-alpine
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+      - ./services/auth-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=auth_db
+    networks:
+      - snapshoot-network
+
+  chat-db:
+    image: postgres:14-alpine
+    volumes:
+      - chat-db-data:/var/lib/postgresql/data
+      - ./services/chat-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=chat_db
+    networks:
+      - snapshoot-network
+
+  media-db:
+    image: postgres:14-alpine
+    volumes:
+      - media-db-data:/var/lib/postgresql/data
+      - ./services/media-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=media_db
+    networks:
+      - snapshoot-network
+
+  geo-db:
+    image: postgis/postgis:14-3.2-alpine
+    volumes:
+      - geo-db-data:/var/lib/postgresql/data
+      - ./services/geo-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=geo_db
+    networks:
+      - snapshoot-network
+
+  story-db:
+    image: postgres:14-alpine
+    volumes:
+      - story-db-data:/var/lib/postgresql/data
+      - ./services/story-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=story_db
+    networks:
+      - snapshoot-network
+
+  notification-db:
+    image: postgres:14-alpine
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+      - ./services/notification-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=notification_db
+    networks:
+      - snapshoot-network
+
+  # Redis pour la mise en cache et les WebSockets
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    networks:
+      - snapshoot-network
+
+  # MinIO pour le stockage d'objets
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    networks:
+      - snapshoot-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@snapshoot.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
+      - ./pgadmin/pgpassfile:/pgpassfile
+    depends_on:
+      - auth-db
+      - chat-db
+      - media-db
+      - geo-db
+      - story-db
+      - notification-db
+    networks:
+      - snapshoot-network
+
+
+
+
+networks:
+  snapshoot-network:
+    driver: bridge
+
+volumes:
+  auth-db-data:
+  chat-db-data:
+  media-db-data:
+  story-db-data:
+  geo-db-data:
+  notification-db-data:
+  redis-data:
+  minio-data:
+  media-uploads:
+  pgadmin-data:

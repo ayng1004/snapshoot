@@ -1,0 +1,6 @@
+auth-db:5432:postgres:postgres:password
+chat-db:5432:postgres:postgres:password
+media-db:5432:postgres:postgres:password
+geo-db:5432:postgres:postgres:password
+story-db:5432:postgres:postgres:password
+notification-db:5432:postgres:postgres:password
