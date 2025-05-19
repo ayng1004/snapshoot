@@ -25,19 +25,60 @@ const ProfileScreen = ({ navigation }) => {
   const [bio, setBio] = useState('');
   const [location, setLocation] = useState('');
   const [loading, setLoading] = useState(false);
-  const [notifications, setNotifications] = useState(true);
-  const [locationSharing, setLocationSharing] = useState(true);
+  const [loadAttempts, setLoadAttempts] = useState(0);
   
-  // Charger les données du profil
+  // Utiliser les infos de l'utilisateur même sans profil complet
   useEffect(() => {
+    // Si userProfile existe, l'utiliser
     if (userProfile) {
       setProfileImage(userProfile.profile_image || '');
-      setUsername(userProfile.display_name || '');
+      setUsername(userProfile.display_name || (user?.email?.split('@')[0] || 'Utilisateur'));
       setBio(userProfile.bio || '');
       setLocation(userProfile.location || '');
+    } 
+    // Sinon, utiliser les informations de base de l'utilisateur
+    else if (user) {
+      setUsername(user.email?.split('@')[0] || 'Utilisateur');
+      setBio('');
+      setLocation('');
+      
+      // Tenter de récupérer le profil à nouveau, maximum 3 fois
+      if (loadAttempts < 3) {
+        setLoadAttempts(prev => prev + 1);
+        refreshProfile().catch(err => console.error('Erreur lors du rafraîchissement:', err));
+      }
     }
-  }, [userProfile]);
-
+  }, [userProfile, user, loadAttempts]);
+  
+  // IMPORTANT: Ne jamais bloquer l'affichage à cause d'un profil manquant
+  // Supprimez cette condition qui cause l'écran de chargement infini
+  // if (!userProfile) {
+  //   return (
+  //     <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+  //       <ActivityIndicator size="large" color="#6C13B3" />
+  //     </View>
+  //   );
+  // }
+  
+  // Un chargement général court (2 secondes max) au lieu d'attendre indéfiniment
+  const [initialLoading, setInitialLoading] = useState(true);
+  
+  useEffect(() => {
+    // Définir un timeout pour s'assurer que l'écran s'affiche après 2 secondes max
+    const timeout = setTimeout(() => {
+      setInitialLoading(false);
+    }, 2000);
+    
+    return () => clearTimeout(timeout);
+  }, []);
+  
+  if (initialLoading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#6C13B3" />
+      </View>
+    );
+  }
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();

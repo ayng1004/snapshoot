@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
 // URL de base de l'API Gateway
-const API_BASE_URL = 'http://192.168.1.27:8080'; // À changer avec votre adresse IP
+const API_BASE_URL = 'http://192.168.1.50:8080'; // À changer avec votre adresse IP
 
 const AuthContext = createContext();
 
@@ -42,76 +42,80 @@ export const AuthProvider = ({ children }) => {
     loadUser();
   }, []);
 
-  // Fonction pour rafraîchir le profil utilisateur
-const refreshProfile = useCallback(async () => {
-  try {
-    if (!user?.id) return { success: false, error: 'Utilisateur non connecté' };
-    
-    setLoading(true);
-    console.log('Rafraîchissement du profil pour', user.id);
-    
-    const token = await AsyncStorage.getItem('auth_token');
-    const response = await axios.get(`${API_BASE_URL}/api/users/me`, {
-      headers: { 
-        Authorization: `Bearer ${token}` 
+  const refreshProfile = useCallback(async () => {
+    try {
+      if (!user?.id) {
+        // Créer un profil par défaut si l'utilisateur n'est pas connecté
+        const defaultProfile = {
+          display_name: 'Utilisateur',
+          bio: '',
+          profile_image: null,
+          location: ''
+        };
+        setUserProfile(defaultProfile);
+        return { success: false, error: 'Utilisateur non connecté' };
       }
-    });
-    
-    console.log('Réponse du profil:', JSON.stringify(response.data, null, 2));
-    
-    // Analyser la structure de la réponse
-    let profileData;
-    
-    if (response.data.user && response.data.user.profile) {
-      // Si l'API renvoie { user: { profile: { ... } } }
-      profileData = response.data.user.profile;
-    } else if (response.data.user) {
-      // Si l'API renvoie { user: { ... } }
-      profileData = {
-        display_name: response.data.user.display_name || response.data.user.email.split('@')[0],
-        bio: response.data.user.bio || '',
-        profile_image: response.data.user.profile_image || null,
-        location: response.data.user.location || ''
+      
+      setLoading(true);
+      console.log('Rafraîchissement du profil pour', user.id);
+      
+      const token = await AsyncStorage.getItem('auth_token');
+      const response = await axios.get(`${API_BASE_URL}/api/users/me`, {
+        headers: { 
+          Authorization: `Bearer ${token}` 
+        }
+      });
+      
+      console.log('Réponse du profil:', JSON.stringify(response.data, null, 2));
+      
+      // Analyser la structure de la réponse
+      let profileData;
+      
+      if (response.data.user && response.data.user.profile) {
+        profileData = response.data.user.profile;
+      } else if (response.data.user) {
+        profileData = {
+          display_name: response.data.user.display_name || user.email.split('@')[0],
+          bio: response.data.user.bio || '',
+          profile_image: response.data.user.profile_image || null,
+          location: response.data.user.location || ''
+        };
+      } else if (response.data.profile) {
+        profileData = response.data.profile;
+      } else {
+        profileData = {
+          display_name: response.data.display_name || user.email.split('@')[0],
+          bio: response.data.bio || '',
+          profile_image: response.data.profile_image || null,
+          location: response.data.location || ''
+        };
+      }
+      
+      setUserProfile(profileData);
+      await AsyncStorage.setItem('user_profile', JSON.stringify(profileData));
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Erreur lors du rafraîchissement du profil:', error);
+      
+      // Créer un profil par défaut en cas d'erreur
+      const defaultProfile = {
+        display_name: user?.email?.split('@')[0] || 'Utilisateur',
+        bio: '',
+        profile_image: null,
+        location: ''
       };
-    } else if (response.data.profile) {
-      // Si l'API renvoie { profile: { ... } }
-      profileData = response.data.profile;
-    } else {
-      // Si l'API renvoie directement les données
-      profileData = {
-        display_name: response.data.display_name || user.email.split('@')[0],
-        bio: response.data.bio || '',
-        profile_image: response.data.profile_image || null,
-        location: response.data.location || ''
+      setUserProfile(defaultProfile);
+      await AsyncStorage.setItem('user_profile', JSON.stringify(defaultProfile));
+      
+      return { 
+        success: false, 
+        error: error.response?.data?.message || 'Erreur lors du chargement du profil'
       };
+    } finally {
+      setLoading(false);
     }
-    
-    // Mise à jour du profil
-    setUserProfile(profileData);
-    await AsyncStorage.setItem('user_profile', JSON.stringify(profileData));
-    
-    return { success: true };
-  } catch (error) {
-    console.error('Erreur lors du rafraîchissement du profil:', error);
-    
-    // Profil par défaut en cas d'erreur
-    const defaultProfile = {
-      display_name: user?.email?.split('@')[0] || 'Utilisateur',
-      bio: '',
-      profile_image: null,
-      location: ''
-    };
-    setUserProfile(defaultProfile);
-    await AsyncStorage.setItem('user_profile', JSON.stringify(defaultProfile));
-    
-    return { 
-      success: false, 
-      error: error.response?.data?.message || 'Erreur lors du chargement du profil'
-    };
-   } finally {
-    setLoading(false);
-  }
-}, [user?.id, loading]);
+  }, [user]);
   const updateProfile = async (profileData) => {
   try {
     setLoading(true);
@@ -173,6 +177,8 @@ const refreshProfile = useCallback(async () => {
       }
 
       setUser(user);
+      await refreshProfile();
+
       return user;
     } catch (error) {
       console.error('Erreur de connexion:', error.response?.data || error.message);

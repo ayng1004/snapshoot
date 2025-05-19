@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // URL de base de l'API Gateway
 // Remplacez cette URL par l'adresse IP ou le nom d'hôte de votre machine
 // où tourne l'API Gateway via Docker
-const API_BASE_URL = 'http://192.168.1.27:8080'; // À ajuster selon votre configuration
+const API_BASE_URL = 'http://192.168.1.50:8080'; // À ajuster selon votre configuration
 
 class ApiClient {
   constructor() {
