@@ -111,14 +111,34 @@ export const updateProfile = async (profileData) => {
 };
 
 // Rechercher des utilisateurs
+// Rechercher des utilisateurs
+// Rechercher des utilisateurs - Version factice
+// Rechercher des utilisateurs - Version factice
 export const searchUsers = async (query) => {
-  try {
-    const response = await apiClient.get('/api/users/search', {
-      params: { query }
-    });
-    return response.data.users || [];
-  } catch (error) {
-    console.error('Erreur dans searchUsers:', error);
-    return [];
-  }
+  console.log('Recherche d\'utilisateurs en mode démo avec terme:', query);
+  
+  // Simuler un délai réseau
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  // Générer des utilisateurs fictifs
+  return [
+    {
+      id: 'user1',
+      display_name: 'Marie Dubois',
+      email: 'marie.dubois@example.com',
+      profile_image: 'https://randomuser.me/api/portraits/women/12.jpg'
+    },
+    {
+      id: 'user2',
+      display_name: 'Paul Martin',
+      email: 'paul.martin@example.com',
+      profile_image: 'https://randomuser.me/api/portraits/men/32.jpg'
+    },
+    {
+      id: 'user3',
+      display_name: 'Claire Fontaine',
+      email: 'claire.fontaine@example.com',
+      profile_image: 'https://randomuser.me/api/portraits/women/47.jpg'
+    }
+  ];
 };

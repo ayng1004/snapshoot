@@ -31,115 +31,176 @@ const FindFriendsScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(false);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [friends, setFriends] = useState([]);
-  
-  // Récupérer les amis, les suggestions et les demandes en attente
   useEffect(() => {
-    const loadFriendsData = async () => {
-      if (!user || !user.id) return;
-      
-      setLoading(true);
-      
+    const checkApiConnection = async () => {
       try {
-        // Récupérer les amis existants
-        const friendsList = await getFriends(user.id).catch(() => []);
-        setFriends(friendsList || []);
-        
-        // Récupérer les demandes d'amis reçues
-        const requests = await getReceivedRequests(user.id).catch(() => []);
-        
-        // Transformer le format des données
-        const formattedRequests = requests.map(request => ({
-          id: request.id,
-          userId: request.profiles.id,
-          name: request.profiles.username || 'Utilisateur',
-          username: `@${request.profiles.username || 'user'}`,
-          avatar: request.profiles.avatar_url || 'https://randomuser.me/api/portraits/lego/1.jpg',
-          requestTime: new Date(request.created_at)
-        }));
-        
-        setPendingRequests(formattedRequests);
-        
-        // Charger des suggestions - utiliser searchUsers avec une requête vide
-        // ou implémenter une autre logique de suggestions
-        const suggestedUsers = await searchUsers('').catch(() => []);
-        
-        // Filtrer les utilisateurs déjà amis et soi-même
-        const friendIds = new Set(friendsList.map(friend => friend.id));
-        const pendingIds = new Set(formattedRequests.map(req => req.userId));
-        
-        const filteredSuggestions = suggestedUsers
-          .filter(u => u.id !== user.id && !friendIds.has(u.id) && !pendingIds.has(u.id))
-          .map(user => ({
-            id: user.id,
-            name: user.username || user.display_name || 'Utilisateur',
-            username: `@${user.username || 'user'}`,
-            avatar: user.avatar_url || user.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
-            mutualFriends: Math.floor(Math.random() * 10) // Simuler des amis en commun
-          }));
-        
-        setSuggestedFriends(filteredSuggestions);
+        // Tenter de charger le profil utilisateur actuel comme test de connexion
+        await getProfile('me');
+        console.log('API accessible');
+        return true;
       } catch (error) {
-        console.error('Erreur lors du chargement des données:', error);
-        
-        // Utiliser des données factices en cas d'erreur
+        console.error('API non accessible:', error);
+        // Si l'API n'est pas accessible, utiliser des données factices
+        Alert.alert(
+          'Mode hors connexion',
+          'Impossible de se connecter au serveur. Utilisation du mode hors ligne.',
+          [{ text: 'OK' }]
+        );
         useMockData();
-      } finally {
-        setLoading(false);
+        return false;
       }
     };
     
-    loadFriendsData();
-  }, [user]);
+    checkApiConnection();
+  }, []);
+// Dans useEffect pour charger les données
+useEffect(() => {
+// Dans la fonction de chargement des données
+const loadFriendsData = async () => {
+  if (!user || !user.id) return;
   
+  setLoading(true);
+  
+  try {
+    // Récupérer les amis existants
+    let friendsList = [];
+    try {
+      friendsList = await getFriends(user.id);
+      console.log('Amis chargés:', friendsList);
+      setFriends(friendsList || []);
+    } catch (friendError) {
+      console.error('Erreur de chargement des amis:', friendError);
+    }
+    
+    // Récupérer les demandes d'amis reçues
+    let requests = [];
+    try {
+      requests = await getReceivedRequests(user.id);
+      console.log('Demandes d\'amis reçues:', requests);
+    } catch (requestError) {
+      console.error('Erreur de chargement des demandes:', requestError);
+    }
+    
+    // Adapter le format en fonction de la structure réelle des données
+    const formattedRequests = requests.map(request => {
+      // Examiner la structure pour extraire correctement les données
+      const userId = request.profiles?.id || request.requester?.id || 'unknown';
+      const name = request.profiles?.username || request.requester?.profile?.display_name || 'Utilisateur';
+      const username = `@${request.profiles?.username || (request.requester?.email ? request.requester.email.split('@')[0] : 'user')}`;
+      const avatar = request.profiles?.avatar_url || request.requester?.profile?.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg';
+      
+      return {
+        id: request.id,
+        userId,
+        name,
+        username,
+        avatar,
+        requestTime: new Date(request.created_at || request.createdAt || Date.now())
+      };
+    });
+    
+    setPendingRequests(formattedRequests);
+    
+    // Charger des suggestions
+    let suggestedUsers = [];
+    try {
+      // Pour les suggestions, faire une recherche avec une requête vide peut ne pas fonctionner
+      // Utilisons des données fictives pour les suggestions
+      suggestedUsers = await searchUsers("a"); // Rechercher avec une lettre commune
+      console.log('Suggestions d\'utilisateurs:', suggestedUsers);
+    } catch (searchError) {
+      console.error('Erreur de recherche d\'utilisateurs:', searchError);
+    }
+    
+    // Si aucun résultat, utiliser des données factices pour les suggestions
+    if (!suggestedUsers || suggestedUsers.length === 0) {
+      useMockData();
+      setLoading(false);
+      return;
+    }
+    
+    // Filtrer les utilisateurs déjà amis et soi-même
+    const friendIds = new Set(friendsList.map(friend => friend.id));
+    const pendingIds = new Set(formattedRequests.map(req => req.userId));
+    
+    const filteredSuggestions = suggestedUsers
+      .filter(u => u.id !== user.id && !friendIds.has(u.id) && !pendingIds.has(u.id))
+      .map(user => ({
+        id: user.id,
+        name: user.display_name || user.username || (user.email ? user.email.split('@')[0] : 'Utilisateur'),
+        username: `@${user.username || (user.email ? user.email.split('@')[0] : 'user')}`,
+        avatar: user.avatar_url || user.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
+        mutualFriends: Math.floor(Math.random() * 10) // Simuler des amis en commun
+      }));
+    
+    // Si nous n'avons pas de suggestions après filtrage, utiliser des données factices
+    if (filteredSuggestions.length === 0) {
+      useMockData();
+    } else {
+      setSuggestedFriends(filteredSuggestions);
+    }
+  } catch (error) {
+    console.error('Erreur lors du chargement des données:', error);
+    useMockData();
+  } finally {
+    setLoading(false);
+  }
+};
+  
+  loadFriendsData();
+}, [user]);
   // Fonction pour utiliser des données factices
-  const useMockData = () => {
-    const dummySuggestions = [
-      {
-        id: 'user1',
-        name: 'Thomas Martin',
-        username: '@tmartin',
-        avatar: 'https://randomuser.me/api/portraits/men/22.jpg',
-        mutualFriends: 5,
-      },
-      {
-        id: 'user2',
-        name: 'Sophie Dupont',
-        username: '@sdupont',
-        avatar: 'https://randomuser.me/api/portraits/women/33.jpg',
-        mutualFriends: 2,
-      },
-      {
-        id: 'user3',
-        name: 'Lucas Bernard',
-        username: '@lbernard',
-        avatar: 'https://randomuser.me/api/portraits/men/45.jpg',
-        mutualFriends: 8,
-      },
-    ];
-    
-    setSuggestedFriends(dummySuggestions);
-    
-    const dummyPendingRequests = [
-      {
-        id: 'req1',
-        userId: 'user4',
-        name: 'Emma Rousseau',
-        username: '@erousseau',
-        avatar: 'https://randomuser.me/api/portraits/women/55.jpg',
-        requestTime: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 heures avant
-      },
-      {
-        id: 'req2',
-        userId: 'user5',
-        name: 'Julien Petit',
-        username: '@jpetit',
-        avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
-        requestTime: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 jour avant
-      },
-    ];
-    
-    setPendingRequests(dummyPendingRequests);
-  };
+// Fonction pour utiliser des données factices
+const useMockData = () => {
+  console.log('Utilisation de données factices');
+  
+  const dummySuggestions = [
+    {
+      id: 'user1',
+      name: 'Thomas Martin',
+      username: '@tmartin',
+      avatar: 'https://randomuser.me/api/portraits/men/22.jpg',
+      mutualFriends: 5,
+    },
+    {
+      id: 'user2',
+      name: 'Sophie Dupont',
+      username: '@sdupont',
+      avatar: 'https://randomuser.me/api/portraits/women/33.jpg',
+      mutualFriends: 2,
+    },
+    {
+      id: 'user3',
+      name: 'Lucas Bernard',
+      username: '@lbernard',
+      avatar: 'https://randomuser.me/api/portraits/men/45.jpg',
+      mutualFriends: 8,
+    },
+  ];
+  
+  setSuggestedFriends(dummySuggestions);
+  
+  const dummyPendingRequests = [
+    {
+      id: 'req1',
+      userId: 'user4',
+      name: 'Emma Rousseau',
+      username: '@erousseau',
+      avatar: 'https://randomuser.me/api/portraits/women/55.jpg',
+      requestTime: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 heures avant
+    },
+    {
+      id: 'req2',
+      userId: 'user5',
+      name: 'Julien Petit',
+      username: '@jpetit',
+      avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
+      requestTime: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 jour avant
+    },
+  ];
+  
+  setPendingRequests(dummyPendingRequests);
+};
   
   // Fonction de recherche d'amis
   const searchFriends = async () => {
