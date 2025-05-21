@@ -1,72 +1,81 @@
-const axios = require('axios');
+/**
+ * Service de notification pour envoyer des notifications lors d'événements liés aux messages et conversations
+ */
 const logger = require('../utils/logger');
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3005';
-
-// Envoyer une notification de nouveau message
-const sendNewMessageNotification = async (senderId, recipientId, conversationId, groupName, messagePreview) => {
+// Simuler l'envoi de notification pour un nouveau message
+const sendNewMessageNotification = async (senderId, receiverId, conversationId, conversationName, messageContent) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
-      user_id: recipientId,
-      type: 'new_message',
-      title: groupName ? `Nouveau message dans ${groupName}` : 'Nouveau message',
-      message: messagePreview.length > 50 ? messagePreview.substring(0, 47) + '...' : messagePreview,
-      data: {
+    logger.info(`Envoi de notification de nouveau message à ${receiverId} pour le message de ${senderId}`);
+    
+    // Ici, vous implémenteriez la logique d'envoi de notification
+    // - Push notification
+    // - Notification en temps réel via WebSocket
+    // - Enregistrement en base de données
+    
+    return {
+      success: true,
+      notification: {
+        type: 'new_message',
         sender_id: senderId,
+        receiver_id: receiverId,
         conversation_id: conversationId,
-        is_group: !!groupName,
-        group_name: groupName
+        conversation_name: conversationName,
+        content_preview: messageContent ? messageContent.substring(0, 50) : 'Nouveau média',
+        created_at: new Date()
       }
-    });
-    
-    logger.info(`Notification de nouveau message envoyée de ${senderId} à ${recipientId}`);
+    };
   } catch (error) {
-    logger.error(`Erreur lors de l'envoi de la notification de nouveau message: ${error.message}`);
-    throw error;
+    logger.error(`Erreur d'envoi de notification: ${error.message}`);
+    return { success: false, error: error.message };
   }
 };
 
-// Envoyer une notification de création de conversation de groupe
-const sendGroupConversationCreatedNotification = async (creatorId, recipientId, conversationId, groupName) => {
+// Simuler l'envoi de notification pour la création d'un groupe
+const sendGroupConversationCreatedNotification = async (creatorId, receiverId, conversationId, groupName) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
-      user_id: recipientId,
-      type: 'group_created',
-      title: 'Nouveau groupe créé',
-      message: `Vous avez été ajouté à "${groupName}"`,
-      data: {
+    logger.info(`Envoi de notification de création de groupe à ${receiverId} pour le groupe "${groupName}" créé par ${creatorId}`);
+    
+    // Logique d'envoi de notification pour la création de groupe
+    
+    return {
+      success: true,
+      notification: {
+        type: 'group_created',
         creator_id: creatorId,
+        receiver_id: receiverId,
         conversation_id: conversationId,
-        group_name: groupName
+        group_name: groupName,
+        created_at: new Date()
       }
-    });
-    
-    logger.info(`Notification de création de groupe envoyée de ${creatorId} à ${recipientId}`);
+    };
   } catch (error) {
-    logger.error(`Erreur lors de l'envoi de la notification de création de groupe: ${error.message}`);
-    throw error;
+    logger.error(`Erreur d'envoi de notification de groupe: ${error.message}`);
+    return { success: false, error: error.message };
   }
 };
 
-// Envoyer une notification d'invitation à un groupe
-const sendGroupInviteNotification = async (inviterId, recipientId, conversationId, groupName) => {
+// Simuler l'envoi de notification pour une invitation à un groupe
+const sendGroupInviteNotification = async (inviterId, inviteeId, conversationId, groupName) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
-      user_id: recipientId,
-      type: 'group_invite',
-      title: 'Invitation à un groupe',
-      message: `Vous avez été invité à rejoindre "${groupName}"`,
-      data: {
-        inviter_id: inviterId,
-        conversation_id: conversationId,
-        group_name: groupName
-      }
-    });
+    logger.info(`Envoi de notification d'invitation à ${inviteeId} pour le groupe "${groupName}" par ${inviterId}`);
     
-    logger.info(`Notification d'invitation à un groupe envoyée de ${inviterId} à ${recipientId}`);
+    // Logique d'envoi de notification pour l'invitation à un groupe
+    
+    return {
+      success: true,
+      notification: {
+        type: 'group_invite',
+        inviter_id: inviterId,
+        invitee_id: inviteeId,
+        conversation_id: conversationId,
+        group_name: groupName,
+        created_at: new Date()
+      }
+    };
   } catch (error) {
-    logger.error(`Erreur lors de l'envoi de la notification d'invitation à un groupe: ${error.message}`);
-    throw error;
+    logger.error(`Erreur d'envoi de notification d'invitation: ${error.message}`);
+    return { success: false, error: error.message };
   }
 };
 

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-
+import { uuidv4 } from '../utils/uuid';
 // URL de base de l'API Gateway
 // Modifiez cette URL pour correspondre à votre API Gateway
 // const API_BASE_URL = 'http://10.0.2.2:3000'; // Pour l'émulateur Android
@@ -15,7 +15,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      timeout: 15000, // Augmentation du timeout à 15 secondes
+      timeout: 60000, // Augmentation du timeout à 15 secondes
     });
     
     // Intercepteur pour ajouter le token à chaque requête
@@ -265,6 +265,85 @@ class ApiClient {
       throw error;
     }
   }
+
+
+
+async isOfflineMode() {
+  try {
+    const value = await AsyncStorage.getItem('offline_mode');
+    return value === 'true';
+  } catch (error) {
+    console.error('Erreur lors de la vérification du mode hors ligne:', error);
+    return false;
+  }
+}
+
+// Activer/désactiver le mode hors ligne
+async setOfflineMode(enabled) {
+  try {
+    await AsyncStorage.setItem('offline_mode', enabled ? 'true' : 'false');
+    console.log(`Mode hors ligne ${enabled ? 'activé' : 'désactivé'}`);
+    return true;
+  } catch (error) {
+    console.error('Erreur lors de la configuration du mode hors ligne:', error);
+    return false;
+  }
+}
+
+// Récupérer l'utilisateur courant
+async getCurrentUser() {
+  try {
+    const userData = await AsyncStorage.getItem('user');
+    if (!userData) {
+      throw new Error('Utilisateur non connecté');
+    }
+    return JSON.parse(userData);
+  } catch (error) {
+    console.error('Erreur lors de la récupération de l\'utilisateur:', error);
+    throw error;
+  }
+}
+
+// Mettre en cache une conversation
+async _cacheConversation(conversation) {
+  try {
+    // Récupérer le cache existant
+    const cachedConversationsData = await AsyncStorage.getItem('cached_conversations');
+    let cachedConversations = cachedConversationsData ? JSON.parse(cachedConversationsData) : [];
+    
+    // Vérifier si la conversation existe déjà
+    const existingIndex = cachedConversations.findIndex(c => c.id === conversation.id);
+    
+    if (existingIndex !== -1) {
+      // Mettre à jour la conversation existante
+      cachedConversations[existingIndex] = {
+        ...cachedConversations[existingIndex],
+        ...conversation
+      };
+    } else {
+      // Ajouter la nouvelle conversation
+      cachedConversations.push(conversation);
+    }
+    
+    // Sauvegarder le cache mis à jour
+    await AsyncStorage.setItem('cached_conversations', JSON.stringify(cachedConversations));
+  } catch (error) {
+    console.error('Erreur lors de la mise en cache de la conversation:', error);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+  
 }
 
 export const apiClient = new ApiClient();

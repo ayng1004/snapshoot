@@ -296,6 +296,13 @@ const ProfileScreen = ({ navigation }) => {
       
       <View style={styles.actionsSection}>
         <TouchableOpacity 
+            style={styles.actionButton}
+             onPress={() => navigation.navigate('FriendsListScreen')}
+          >
+            <Ionicons name="people" size={24} color="#6C13B3" />
+            <Text style={styles.actionButtonText}>Mes amis</Text>
+          </TouchableOpacity>
+        <TouchableOpacity 
           style={styles.actionButton}
           onPress={() => navigation.navigate('FindFriendsScreen')}
         >

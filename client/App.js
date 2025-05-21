@@ -16,6 +16,7 @@ import MapScreen from './src/screens/MapScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import StoriesScreen from './src/screens/StoriesScreen';
 import FindFriendsScreen from './src/screens/FindFriendsScreen';
+import FriendsListScreen from './src/screens/FriendsListScreen';
 
 // Ignorer certains avertissements non critiques
 LogBox.ignoreLogs([
@@ -23,7 +24,33 @@ LogBox.ignoreLogs([
   'Possible Unhandled Promise Rejection',
   'Setting a timer'
 ]);
+// 🔧 Nettoyage des conversations invalides
+export const CleanConversationsStorage = () => {
+  useEffect(() => {
+    const clearInvalidConversations = async () => {
+      try {
+        const data = await AsyncStorage.getItem('cached_conversations');
+        if (!data) return;
 
+        const conversations = JSON.parse(data);
+        const filtered = conversations.filter(c =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(c.id)
+        );
+
+        if (filtered.length !== conversations.length) {
+          console.log('❌ Conversations invalides détectées, purge...');
+          await AsyncStorage.setItem('cached_conversations', JSON.stringify(filtered));
+        }
+      } catch (err) {
+        console.error('Erreur de purge cache conversations :', err);
+      }
+    };
+
+    clearInvalidConversations();
+  }, []);
+
+  return null;
+};
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 // Une version simplifiée sans CustomTabBar
@@ -76,6 +103,8 @@ const MainStack = () => {
       <Stack.Screen name="Main" component={MainTabs} />
       <Stack.Screen name="ConversationScreen" component={ConversationScreen} />
       <Stack.Screen name="FindFriendsScreen" component={FindFriendsScreen} />
+            <Stack.Screen name="FriendsListScreen" component={FriendsListScreen} />
+
     </Stack.Navigator>
   );
 };
@@ -89,6 +118,7 @@ const AppContent = () => {
   return (
     <NavigationContainer>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+       <CleanConversationsStorage />
       {user ? <MainStack /> : <AuthScreen />}
     </NavigationContainer>
   );
