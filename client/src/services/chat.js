@@ -1,6 +1,58 @@
-import { apiClient } from './apiClient';
+// services/localChat.js - VERSION MODIFIÉE
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { v4 as uuidv4 } from 'uuid'; // Utiliser uuid directement plutôt que la fonction personnalisée
+import { v4 as uuidv4 } from 'uuid';
+import * as FileSystem from 'expo-file-system';
+
+// Constantes pour les clés de stockage
+const STORAGE_KEYS = {
+  CONVERSATIONS: 'local_conversations',
+  MESSAGES_PREFIX: 'local_messages_',
+  CURRENT_USER_ID: 'local_user_id',
+  CONTACTS: 'local_contacts',
+  MEDIA_DIRECTORY: FileSystem.documentDirectory + 'local_media/',
+  // Nouvelle clé pour stocker l'ID de la conversation par destinataire
+  CONVERSATION_BY_RECIPIENT: 'local_conversation_by_recipient_'
+};
+
+// FONCTION MODIFIÉE: S'assurer que l'utilisateur actuel a un ID
+export const ensureCurrentUserId = async (forcedUserId = null) => {
+  try {
+    let userId = await AsyncStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+    
+    // Si un ID est forcé, l'utiliser
+    if (forcedUserId) {
+      if (userId !== forcedUserId) {
+        userId = forcedUserId;
+        await AsyncStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, userId);
+        console.log('ID utilisateur mis à jour forcément:', userId);
+      }
+      return userId;
+    }
+    
+    // Sinon, utiliser ou générer un ID
+    if (!userId) {
+      userId = uuidv4();
+      await AsyncStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, userId);
+    }
+    return userId;
+  } catch (error) {
+    console.error('Erreur lors de l\'initialisation de l\'ID utilisateur:', error);
+    throw error;
+  }
+};
+
+// Initialiser le répertoire pour les médias
+export const initializeMediaDirectory = async () => {
+  try {
+    const dirInfo = await FileSystem.getInfoAsync(STORAGE_KEYS.MEDIA_DIRECTORY);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(STORAGE_KEYS.MEDIA_DIRECTORY, { intermediates: true });
+      console.log('Répertoire médias créé:', STORAGE_KEYS.MEDIA_DIRECTORY);
+    }
+  } catch (error) {
+    console.error('Erreur lors de l\'initialisation du répertoire médias:', error);
+  }
+};
 
 // Vérifier si une chaîne est un UUID valide
 export const isValidUUID = (id) => {
@@ -10,34 +62,16 @@ export const isValidUUID = (id) => {
 // Récupérer les conversations d'un utilisateur
 export const getUserConversations = async () => {
   try {
-    // Vérifier d'abord le cache
-    const cachedConversations = await AsyncStorage.getItem('cached_conversations');
-    let conversations = cachedConversations ? JSON.parse(cachedConversations) : [];
+    // Récupérer depuis AsyncStorage
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    try {
-      // Récupérer depuis l'API
-      const response = await apiClient.get('/conversations');
-      
-      if (response && response.data && response.data.conversations) {
-        conversations = response.data.conversations;
-        
-        // Mettre à jour le cache
-        await AsyncStorage.setItem('cached_conversations', JSON.stringify(conversations));
-      }
-    } catch (apiError) {
-      console.log('Erreur API, utilisation du cache:', apiError.message);
-      // En cas d'erreur, on continue avec les données du cache
-    }
+    // Trier par date de mise à jour, la plus récente en premier
+    conversations.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     
     return conversations;
   } catch (error) {
     console.error('Erreur lors de la récupération des conversations:', error);
-    
-    // En développement, retourner des données fictives
-    if (__DEV__) {
-      return getMockConversations();
-    }
-    
     return [];
   }
 };
@@ -50,32 +84,18 @@ export const getConversationById = async (conversationId) => {
   }
   
   try {
-    // Vérifier d'abord le cache
-    const cachedConversations = await AsyncStorage.getItem('cached_conversations');
-    if (cachedConversations) {
-      const conversations = JSON.parse(cachedConversations);
-      const cachedConversation = conversations.find(c => c.id === conversationId);
-      if (cachedConversation) {
-        return cachedConversation;
-      }
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    const conversations = conversationsString ? JSON.parse(conversationsString) : [];
+    const conversation = conversations.find(c => c.id === conversationId);
+    
+    if (conversation) {
+      return conversation;
     }
     
-    // Récupérer depuis l'API
-    const response = await apiClient.get(`/conversations/${conversationId}`);
-    
-    if (response && response.data && response.data.conversation) {
-      return response.data.conversation;
-    }
-    
-    throw new Error('Conversation non trouvée');
+    console.error(`Conversation ${conversationId} non trouvée`);
+    return null;
   } catch (error) {
-    console.error(`Erreur lors de la récupération de la conversation ${conversationId}:`, error.message);
-    
-    // En développement, retourner une conversation fictive
-    if (__DEV__) {
-      return getMockConversation(conversationId);
-    }
-    
+    console.error(`Erreur lors de la récupération de la conversation ${conversationId}:`, error);
     return null;
   }
 };
@@ -87,124 +107,157 @@ export const getChatMessages = async (conversationId) => {
     return [];
   }
   
-  console.log(`Récupération des messages. ConversationID: ${conversationId}, UUID valide: ${isValidUUID(conversationId)}`);
-  
-  // Vérifier le cache d'abord
-  const cacheKey = `messages_${conversationId}`;
-  const cachedMessagesStr = await AsyncStorage.getItem(cacheKey);
-  let cachedMessages = cachedMessagesStr ? JSON.parse(cachedMessagesStr) : [];
-  
-  if (cachedMessages.length > 0) {
-    console.log(`${cachedMessages.length} messages trouvés dans le cache`);
-  }
-  
   try {
-    // Essayer de récupérer depuis l'API
-    const response = await apiClient.get(`/conversations/${conversationId}/messages`);
+    const messagesKey = `${STORAGE_KEYS.MESSAGES_PREFIX}${conversationId}`;
+    const messagesString = await AsyncStorage.getItem(messagesKey);
+    const messages = messagesString ? JSON.parse(messagesString) : [];
     
-    if (response && response.data && response.data.messages) {
-      console.log(`${response.data.messages.length} messages récupérés depuis l'API`);
-      
-      // Mettre en cache
-      await AsyncStorage.setItem(cacheKey, JSON.stringify(response.data.messages));
-      
-      return response.data.messages;
-    }
+    // Trier par date de création
+    messages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     
-    // Si aucun message n'a été trouvé dans l'API mais qu'on a le cache
-    if (cachedMessages.length > 0) {
-      return cachedMessages;
-    }
-    
-    // Sinon, retourner un tableau vide ou des messages fictifs en dev
-    return __DEV__ ? getMockMessages(conversationId) : [];
+    return messages;
   } catch (error) {
-    console.error(`Erreur API pour les messages: ${error.message}`);
-    
-    // En cas d'erreur, utiliser le cache si disponible
-    if (cachedMessages.length > 0) {
-      return cachedMessages;
-    }
-    
-    // Sinon, en dev, retourner des messages fictifs
-    if (__DEV__) {
-      const mockMessages = getMockMessages(conversationId);
-      
-      // Mettre en cache
-      await AsyncStorage.setItem(cacheKey, JSON.stringify(mockMessages));
-      
-      return mockMessages;
-    }
-    
+    console.error(`Erreur lors de la récupération des messages pour ${conversationId}:`, error);
     return [];
   }
 };
 
+// Sauvegarder un fichier média localement et retourner son URI
+export const saveMediaFile = async (uri, type) => {
+  try {
+    await initializeMediaDirectory();
+    
+    const fileName = `${uuidv4()}.${type === 'video' ? 'mp4' : 'jpg'}`;
+    const destinationUri = `${STORAGE_KEYS.MEDIA_DIRECTORY}${fileName}`;
+    
+    // Copier le fichier
+    await FileSystem.copyAsync({
+      from: uri,
+      to: destinationUri
+    });
+    
+    return destinationUri;
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde du média:', error);
+    throw error;
+  }
+};
+
 // Envoyer un message
-export const sendMessage = async (conversationId, content, mediaUrl = null, mediaType = null) => {
+export const sendMessage = async (conversationId, content, mediaUri = null, mediaType = null) => {
   if (!conversationId) {
     console.error('ID de conversation manquant');
     throw new Error('ID de conversation requis');
   }
   
   try {
-    const messageData = {
-      content,
-      media_url: mediaUrl,
-      media_type: mediaType
+    // Récupérer l'ID utilisateur actuel
+    const userId = await ensureCurrentUserId();
+    
+    // Sauvegarder les médias localement si présents
+    let localMediaUri = null;
+    if (mediaUri) {
+      localMediaUri = await saveMediaFile(mediaUri, mediaType);
+    }
+    
+    // Créer le nouveau message
+    const newMessage = {
+      id: uuidv4(),
+      conversation_id: conversationId,
+      user_id: userId,
+      content: content,
+      media_url: localMediaUri,
+      media_type: mediaType,
+      created_at: new Date().toISOString(),
+      is_deleted: false
     };
     
-    console.log(`Envoi de message à la conversation ${conversationId}`);
+    // Récupérer les messages existants pour cette conversation
+    const messagesKey = `${STORAGE_KEYS.MESSAGES_PREFIX}${conversationId}`;
+    const messagesString = await AsyncStorage.getItem(messagesKey);
+    const messages = messagesString ? JSON.parse(messagesString) : [];
     
-    // Envoyer via l'API
-    const response = await apiClient.post(`/conversations/${conversationId}/messages`, messageData);
+    // Ajouter le nouveau message
+    messages.push(newMessage);
     
-    if (response && response.data) {
-      const newMessage = response.data.data || response.data.message;
+    // Sauvegarder les messages
+    await AsyncStorage.setItem(messagesKey, JSON.stringify(messages));
+    
+    // Mettre à jour la dernière activité de la conversation
+    await updateConversationLastActivity(conversationId, content, localMediaUri, mediaType);
+    
+    return newMessage;
+  } catch (error) {
+    console.error(`Erreur lors de l'envoi du message à ${conversationId}:`, error);
+    throw error;
+  }
+};
+
+// Mettre à jour la dernière activité d'une conversation
+const updateConversationLastActivity = async (conversationId, content, mediaUrl, mediaType) => {
+  try {
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
+    
+    const conversationIndex = conversations.findIndex(c => c.id === conversationId);
+    
+    if (conversationIndex !== -1) {
+      const now = new Date().toISOString();
       
-      if (newMessage) {
-        // Mettre à jour le cache des messages
-        const cacheKey = `messages_${conversationId}`;
-        const cachedMessages = await AsyncStorage.getItem(cacheKey);
-        
-        if (cachedMessages) {
-          const messages = JSON.parse(cachedMessages);
-          messages.push(newMessage);
-          await AsyncStorage.setItem(cacheKey, JSON.stringify(messages));
-        }
-        
-        return newMessage;
+      // Mettre à jour la conversation
+      conversations[conversationIndex] = {
+        ...conversations[conversationIndex],
+        lastMessage: {
+          content,
+          media_url: mediaUrl,
+          media_type: mediaType,
+          created_at: now
+        },
+        updated_at: now
+      };
+      
+      // Sauvegarder les conversations mises à jour
+      await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+    }
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour de la conversation:', error);
+  }
+};
+
+// FONCTION MODIFIÉE: Trouver ou créer une conversation avec un utilisateur
+export const findOrCreateConversation = async (recipientId, recipientName = null, recipientAvatar = null) => {
+  try {
+    // Récupérer l'ID de l'utilisateur actuel
+    const currentUserId = await ensureCurrentUserId();
+    
+    // Vérifier si une conversation existe déjà avec ce destinataire
+    const convKeyForRecipient = `${STORAGE_KEYS.CONVERSATION_BY_RECIPIENT}${recipientId}`;
+    let existingConversationId = await AsyncStorage.getItem(convKeyForRecipient);
+    
+    if (existingConversationId) {
+      // Vérifier si la conversation existe encore
+      const conversation = await getConversationById(existingConversationId);
+      if (conversation) {
+        console.log(`Conversation existante trouvée avec ${recipientId}: ${existingConversationId}`);
+        return conversation;
       }
     }
     
-    throw new Error('Format de réponse inattendu');
+    // Si aucune conversation n'existe, en créer une nouvelle
+    console.log(`Création d'une nouvelle conversation avec ${recipientId}`);
+    const newConversation = await createConversation(
+      [currentUserId, recipientId],
+      false, 
+      recipientName,
+      recipientAvatar
+    );
+    
+    // Enregistrer l'ID de la conversation pour ce destinataire
+    await AsyncStorage.setItem(convKeyForRecipient, newConversation.id);
+    
+    return newConversation;
   } catch (error) {
-    console.error(`Erreur lors de l'envoi du message à ${conversationId}:`, error.message);
-    
-    // En développement, simuler un message envoyé localement
-    if (__DEV__) {
-      const mockMessage = {
-        id: uuidv4(),
-        conversation_id: conversationId,
-        sender_id: await AsyncStorage.getItem('userId') || 'current-user',
-        content: content,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        created_at: new Date().toISOString(),
-        is_deleted: false
-      };
-      
-      // Mettre à jour le cache des messages
-      const cacheKey = `messages_${conversationId}`;
-      const cachedMessagesStr = await AsyncStorage.getItem(cacheKey);
-      const cachedMessages = cachedMessagesStr ? JSON.parse(cachedMessagesStr) : [];
-      
-      cachedMessages.push(mockMessage);
-      await AsyncStorage.setItem(cacheKey, JSON.stringify(cachedMessages));
-      
-      return mockMessage;
-    }
-    
+    console.error(`Erreur lors de la recherche/création de conversation avec ${recipientId}:`, error);
     throw error;
   }
 };
@@ -212,43 +265,57 @@ export const sendMessage = async (conversationId, content, mediaUrl = null, medi
 // Créer une nouvelle conversation
 export const createConversation = async (participants, isGroup = false, name = null, avatar = null) => {
   try {
-    console.log('Tentative de création de conversation avec participants:', participants);
+    // Assurez-vous que l'utilisateur actuel a un ID
+    const currentUserId = await ensureCurrentUserId();
     
-    // Créer une conversation locale d'abord, pour assurer une bonne expérience utilisateur
-    const localConversationId = uuidv4();
-    const localConversation = {
-      id: localConversationId,
+    // Assurez-vous que l'utilisateur actuel est inclus dans les participants
+    if (!participants.includes(currentUserId)) {
+      participants.push(currentUserId);
+    }
+    
+    // Créer une nouvelle conversation
+    const newConversationId = uuidv4();
+    const now = new Date().toISOString();
+    
+    const newConversation = {
+      id: newConversationId,
       is_group: isGroup,
       name,
       avatar,
       participants,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      created_at: now,
+      updated_at: now,
+      lastMessage: {
+        content: 'Conversation créée',
+        created_at: now
+      },
+      unreadCount: 0
     };
     
-    // Sauvegarder localement immédiatement
-    const cachedConversationsStr = await AsyncStorage.getItem('cached_conversations');
-    const cachedConversations = cachedConversationsStr ? JSON.parse(cachedConversationsStr) : [];
-    cachedConversations.push(localConversation);
-    await AsyncStorage.setItem('cached_conversations', JSON.stringify(cachedConversations));
+    // Récupérer les conversations existantes
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    const conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    // Maintenant, tenter de synchro avec le serveur (en arrière-plan)
-    apiClient.post('/api/conversations', {
-      participants,
-      is_group: isGroup,
-      name,
-      avatar,
-      id: localConversationId // Envoyer l'ID local pour que le serveur l'utilise
-    }).then(response => {
-      console.log('Conversation synchronisée avec le serveur:', response);
-    }).catch(error => {
-      console.log('Échec de la synchronisation avec le serveur:', error);
-      // La conversation locale est déjà enregistrée, pas besoin d'action supplémentaire
-    });
+    // Ajouter la nouvelle conversation
+    conversations.push(newConversation);
     
-    return localConversation;
+    // Sauvegarder les conversations
+    await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+    
+    // Initialiser un tableau de messages vide pour cette conversation
+    const messagesKey = `${STORAGE_KEYS.MESSAGES_PREFIX}${newConversationId}`;
+    await AsyncStorage.setItem(messagesKey, JSON.stringify([]));
+    
+    // Enregistrer l'ID de la conversation pour chaque destinataire
+    for (const participantId of participants) {
+      if (participantId !== currentUserId) {
+        await AsyncStorage.setItem(`${STORAGE_KEYS.CONVERSATION_BY_RECIPIENT}${participantId}`, newConversationId);
+      }
+    }
+    
+    return newConversation;
   } catch (error) {
-    console.error('Erreur lors de la création de conversation:', error.message);
+    console.error('Erreur lors de la création de conversation:', error);
     throw error;
   }
 };
@@ -256,19 +323,28 @@ export const createConversation = async (participants, isGroup = false, name = n
 // Mettre à jour une conversation
 export const updateConversation = async (conversationId, name, avatar) => {
   try {
-    const updates = {};
-    if (name !== undefined) updates.name = name;
-    if (avatar !== undefined) updates.avatar = avatar;
+    // Récupérer les conversations
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    const response = await apiClient.put(`/conversations/${conversationId}`, updates);
+    // Trouver la conversation à mettre à jour
+    const conversationIndex = conversations.findIndex(c => c.id === conversationId);
     
-    if (response && response.data && response.data.conversation) {
-      return response.data.conversation;
+    if (conversationIndex !== -1) {
+      // Mettre à jour les champs
+      if (name !== undefined) conversations[conversationIndex].name = name;
+      if (avatar !== undefined) conversations[conversationIndex].avatar = avatar;
+      conversations[conversationIndex].updated_at = new Date().toISOString();
+      
+      // Sauvegarder les conversations mises à jour
+      await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+      
+      return conversations[conversationIndex];
     }
     
-    return {};
+    throw new Error('Conversation non trouvée');
   } catch (error) {
-    console.error(`Erreur lors de la mise à jour de la conversation ${conversationId}:`, error.message);
+    console.error(`Erreur lors de la mise à jour de la conversation ${conversationId}:`, error);
     throw error;
   }
 };
@@ -276,15 +352,38 @@ export const updateConversation = async (conversationId, name, avatar) => {
 // Ajouter un participant
 export const addParticipant = async (conversationId, userId) => {
   try {
-    const response = await apiClient.post(`/conversations/${conversationId}/participants`, { userId });
+    // Récupérer les conversations
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    if (response && response.data && response.data.conversation) {
-      return response.data.conversation;
+    // Trouver la conversation
+    const conversationIndex = conversations.findIndex(c => c.id === conversationId);
+    
+    if (conversationIndex !== -1) {
+      // S'assurer que participants est un tableau
+      if (!Array.isArray(conversations[conversationIndex].participants)) {
+        conversations[conversationIndex].participants = [];
+      }
+      
+      // Vérifier si l'utilisateur est déjà un participant
+      if (!conversations[conversationIndex].participants.includes(userId)) {
+        // Ajouter le participant
+        conversations[conversationIndex].participants.push(userId);
+        conversations[conversationIndex].updated_at = new Date().toISOString();
+        
+        // Sauvegarder les conversations mises à jour
+        await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+        
+        // Enregistrer l'association pour ce participant
+        await AsyncStorage.setItem(`${STORAGE_KEYS.CONVERSATION_BY_RECIPIENT}${userId}`, conversationId);
+      }
+      
+      return conversations[conversationIndex];
     }
     
-    return {};
+    throw new Error('Conversation non trouvée');
   } catch (error) {
-    console.error(`Erreur lors de l'ajout du participant à la conversation ${conversationId}:`, error.message);
+    console.error(`Erreur lors de l'ajout du participant à la conversation ${conversationId}:`, error);
     throw error;
   }
 };
@@ -292,15 +391,37 @@ export const addParticipant = async (conversationId, userId) => {
 // Supprimer un participant
 export const removeParticipant = async (conversationId, userId) => {
   try {
-    const response = await apiClient.delete(`/conversations/${conversationId}/participants/${userId}`);
+    // Récupérer les conversations
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    if (response && response.data && response.data.conversation) {
-      return response.data.conversation;
+    // Trouver la conversation
+    const conversationIndex = conversations.findIndex(c => c.id === conversationId);
+    
+    if (conversationIndex !== -1) {
+      // S'assurer que participants est un tableau
+      if (!Array.isArray(conversations[conversationIndex].participants)) {
+        conversations[conversationIndex].participants = [];
+      }
+      
+      // Filtrer le participant
+      conversations[conversationIndex].participants = 
+        conversations[conversationIndex].participants.filter(id => id !== userId);
+      
+      conversations[conversationIndex].updated_at = new Date().toISOString();
+      
+      // Sauvegarder les conversations mises à jour
+      await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+      
+      // Supprimer l'association pour ce participant
+      await AsyncStorage.removeItem(`${STORAGE_KEYS.CONVERSATION_BY_RECIPIENT}${userId}`);
+      
+      return conversations[conversationIndex];
     }
     
-    return {};
+    throw new Error('Conversation non trouvée');
   } catch (error) {
-    console.error(`Erreur lors de la suppression du participant de la conversation ${conversationId}:`, error.message);
+    console.error(`Erreur lors de la suppression du participant de la conversation ${conversationId}:`, error);
     throw error;
   }
 };
@@ -308,120 +429,134 @@ export const removeParticipant = async (conversationId, userId) => {
 // Marquer une conversation comme lue
 export const markConversationAsRead = async (conversationId) => {
   try {
-    const response = await apiClient.put(`/conversations/${conversationId}/read`);
+    // Récupérer les conversations
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    let conversations = conversationsString ? JSON.parse(conversationsString) : [];
     
-    if (response && response.data) {
-      return response.data;
+    // Trouver la conversation
+    const conversationIndex = conversations.findIndex(c => c.id === conversationId);
+    
+    if (conversationIndex !== -1) {
+      // Mettre à jour le compteur de non lus
+      conversations[conversationIndex].unreadCount = 0;
+      
+      // Sauvegarder les conversations mises à jour
+      await AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+      
+      return conversations[conversationIndex];
     }
     
-    return {};
+    throw new Error('Conversation non trouvée');
   } catch (error) {
-    console.error(`Erreur lors du marquage de la conversation ${conversationId} comme lue:`, error.message);
+    console.error(`Erreur lors du marquage de la conversation ${conversationId} comme lue:`, error);
     throw error;
   }
 };
 
-// === FONCTIONS MOCK POUR LE DÉVELOPPEMENT ===
-
-// Données de conversation fictives
-export const getMockConversations = () => {
-  return [
-    {
-      id: uuidv4(),
-      is_group: false,
-      otherParticipant: {
-        display_name: 'Alice Martin',
-        profile_image: 'https://randomuser.me/api/portraits/women/44.jpg'
-      },
-      lastMessage: {
-        content: 'Bonjour, comment ça va ?',
-        created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString() // 5 min ago
-      },
-      unreadCount: 2
-    },
-    {
-      id: uuidv4(),
-      is_group: true,
-      name: 'Projet Mobile',
-      lastMessage: {
-        content: 'On se retrouve demain pour la démo ?',
-        created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString() // 30 min ago
-      },
-      unreadCount: 0
-    },
-    {
-      id: uuidv4(),
-      is_group: false,
-      otherParticipant: {
-        display_name: 'Marc Dubois',
-        profile_image: 'https://randomuser.me/api/portraits/men/32.jpg'
-      },
-      lastMessage: {
-        media_type: 'image',
-        media_url: 'https://example.com/image.jpg',
-        created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString() // 2 hours ago
-      },
-      unreadCount: 1
-    }
-  ];
+// Télécharger les médias - Version locale qui ne fait rien car les médias sont déjà locaux
+export const uploadMedia = async (uri, type, userId, conversationId) => {
+  // Simplement sauvegarder le fichier localement
+  return await saveMediaFile(uri, type === 'video' ? 'video' : 'image');
 };
 
-// Messages fictifs pour le développement
-export const getMockMessages = (conversationId) => {
-  const userId = 'current-user-' + Math.floor(Math.random() * 1000);
-  const otherId = 'other-user-' + Math.floor(Math.random() * 1000);
-  
-  return [
-    {
-      id: uuidv4(),
-      conversation_id: conversationId,
-      sender_id: otherId,
-      content: 'Salut, comment vas-tu aujourd\'hui ?',
-      created_at: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-      is_deleted: false
-    },
-    {
-      id: uuidv4(),
-      conversation_id: conversationId,
-      sender_id: userId,
-      content: 'Très bien, merci ! Et toi ?',
-      created_at: new Date(Date.now() - 1000 * 60 * 55).toISOString(),
-      is_deleted: false
-    },
-    {
-      id: uuidv4(),
-      conversation_id: conversationId,
-      sender_id: otherId,
-      content: 'Bien aussi. Tu as avancé sur le projet ?',
-      created_at: new Date(Date.now() - 1000 * 60 * 50).toISOString(),
-      is_deleted: false
-    },
-    {
-      id: uuidv4(),
-      conversation_id: conversationId,
-      sender_id: userId,
-      content: 'Oui, j\'ai terminé la partie frontend. Il reste juste à connecter avec l\'API.',
-      created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-      is_deleted: false
+// Fonction pour initialiser les données des contacts
+export const initializeContacts = async () => {
+  try {
+    // Vérifier si les contacts existent déjà
+    const contactsString = await AsyncStorage.getItem(STORAGE_KEYS.CONTACTS);
+    if (!contactsString) {
+      // Créer des contacts fictifs
+      const mockContacts = [
+        {
+          id: uuidv4(),
+          display_name: 'Alice Martin',
+          profile_image: 'https://randomuser.me/api/portraits/women/44.jpg'
+        },
+        {
+          id: uuidv4(),
+          display_name: 'Marc Dubois',
+          profile_image: 'https://randomuser.me/api/portraits/men/32.jpg'
+        },
+        {
+          id: uuidv4(),
+          display_name: 'Emma Laurent',
+          profile_image: 'https://randomuser.me/api/portraits/women/22.jpg'
+        }
+      ];
+      
+      await AsyncStorage.setItem(STORAGE_KEYS.CONTACTS, JSON.stringify(mockContacts));
+      return mockContacts;
+    } else {
+      return JSON.parse(contactsString);
     }
-  ];
+  } catch (error) {
+    console.error('Erreur lors de l\'initialisation des contacts:', error);
+    return [];
+  }
 };
 
-// Conversation fictive par ID
-export const getMockConversation = (conversationId) => {
-  return {
-    id: conversationId,
-    is_group: false,
-    otherParticipant: {
-      display_name: 'Utilisateur',
-      profile_image: 'https://randomuser.me/api/portraits/lego/1.jpg'
-    },
-    lastMessage: {
-      content: 'Conversation commencée',
-      created_at: new Date().toISOString()
-    },
-    unreadCount: 0
-  };
+// Récupérer les contacts
+export const getContacts = async () => {
+  try {
+    const contactsString = await AsyncStorage.getItem(STORAGE_KEYS.CONTACTS);
+    if (contactsString) {
+      return JSON.parse(contactsString);
+    }
+    return await initializeContacts();
+  } catch (error) {
+    console.error('Erreur lors de la récupération des contacts:', error);
+    return [];
+  }
+};
+
+// Initialiser l'application
+export const initializeApp = async () => {
+  try {
+    // S'assurer que l'utilisateur a un ID
+    await ensureCurrentUserId();
+    
+    // Initialiser le répertoire des médias
+    await initializeMediaDirectory();
+    
+    // Initialiser les contacts
+    await initializeContacts();
+    
+    // Si pas de conversations, en créer quelques-unes
+    const conversationsString = await AsyncStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+    if (!conversationsString || JSON.parse(conversationsString).length === 0) {
+      const contacts = await getContacts();
+      const currentUserId = await ensureCurrentUserId();
+      
+      // Créer des conversations avec chaque contact
+      for (const contact of contacts) {
+        const conversation = await createConversation(
+          [currentUserId, contact.id], 
+          false, 
+          contact.display_name, 
+          contact.profile_image
+        );
+        
+        // Associer le contact à la conversation
+        await AsyncStorage.setItem(
+          `${STORAGE_KEYS.CONVERSATION_BY_RECIPIENT}${contact.id}`, 
+          conversation.id
+        );
+      }
+      
+      // Créer un groupe
+      await createConversation(
+        [currentUserId, ...contacts.map(c => c.id)],
+        true,
+        'Groupe Amis',
+        'https://randomuser.me/api/portraits/lego/1.jpg'
+      );
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Erreur lors de l\'initialisation de l\'application:', error);
+    return false;
+  }
 };
 
 export default {
@@ -430,8 +565,13 @@ export default {
   getChatMessages,
   sendMessage,
   createConversation,
+  findOrCreateConversation, // Nouvelle fonction
   updateConversation,
   addParticipant,
   removeParticipant,
-  markConversationAsRead
+  markConversationAsRead,
+  uploadMedia,
+  getContacts,
+  initializeApp,
+  ensureCurrentUserId
 };

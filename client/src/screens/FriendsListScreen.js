@@ -16,26 +16,41 @@ import { useAuth } from '../context/AuthContext';
 import { getFriends, removeFriend } from '../api/friendsApi';
 import { uuidv4 } from '../utils/uuid';
 
-// Importer createConversation depuis services/chat
-import { createConversation } from '../services/chat'; 
+// Importer les fonctions nécessaires du service chat
+import { 
+  getUserConversations, 
+  createConversation, 
+  getChatMessages 
+} from '../services/chat'; 
+
+// Clé pour stocker les associations ami-conversation dans AsyncStorage
+const FRIEND_CONVERSATION_KEY = 'friend_conversation_';
+
 const FriendsListScreen = ({ navigation }) => {
   const { user } = useAuth();
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [conversations, setConversations] = useState([]);
 
-  // Charger la liste des amis
-  const loadFriends = useCallback(async () => {
+  // Charger la liste des amis et des conversations
+  const loadFriendsAndConversations = useCallback(async () => {
     if (!user) return;
     
     setLoading(true);
     try {
+      // Charger les amis
       const friendsList = await getFriends();
       console.log('Amis chargés:', friendsList);
       setFriends(friendsList || []);
+      
+      // Charger les conversations
+      const userConversations = await getUserConversations();
+      console.log('Conversations chargées:', userConversations?.length || 0);
+      setConversations(userConversations || []);
     } catch (error) {
-      console.error('Erreur lors du chargement des amis:', error);
-      Alert.alert('Erreur', 'Impossible de charger la liste d\'amis');
+      console.error('Erreur lors du chargement:', error);
+      Alert.alert('Erreur', 'Impossible de charger les données');
     } finally {
       setLoading(false);
     }
@@ -43,53 +58,102 @@ const FriendsListScreen = ({ navigation }) => {
 
   // Charger au démarrage
   useEffect(() => {
-    loadFriends();
-  }, [loadFriends]);
+    loadFriendsAndConversations();
+  }, [loadFriendsAndConversations]);
 
   // Rafraîchir la liste
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFriends();
+    await loadFriendsAndConversations();
     setRefreshing(false);
-  }, [loadFriends]);
+  }, [loadFriendsAndConversations]);
 
-  // Envoyer un message à un ami
- // Dans FriendsListScreen.js
+  // Trouver une conversation existante avec un ami
+  const findExistingConversation = async (friendId) => {
+    try {
+      // 1. Vérifier s'il existe une entrée dans AsyncStorage qui enregistre l'association
+      const storedConvId = await AsyncStorage.getItem(`${FRIEND_CONVERSATION_KEY}${friendId}`);
+      if (storedConvId) {
+        console.log(`Conversation trouvée via AsyncStorage pour ${friendId}: ${storedConvId}`);
+        
+        // Vérifier si la conversation existe toujours
+        const chatMessages = await getChatMessages(storedConvId);
+        if (chatMessages && chatMessages.length > 0) {
+          return storedConvId;
+        }
+      }
+      
+      // 2. Sinon, parcourir les conversations pour trouver si l'ami fait partie des participants
+      if (conversations && conversations.length > 0) {
+        for (const conv of conversations) {
+          if (conv.is_group === false && 
+              conv.participants && 
+              conv.participants.includes(friendId)) {
+            
+            // Sauvegarder l'association pour une utilisation future
+            await AsyncStorage.setItem(`${FRIEND_CONVERSATION_KEY}${friendId}`, conv.id);
+            console.log(`Conversation trouvée via liste pour ${friendId}: ${conv.id}`);
+            return conv.id;
+          }
+        }
+      }
+      
+      // Aucune conversation existante trouvée
+      return null;
+    } catch (error) {
+      console.error('Erreur lors de la recherche de conversation:', error);
+      return null;
+    }
+  };
 
-const handleSendMessage = async (friend) => {
-  try {
-    setLoading(true);
-    
-    console.log('Démarrage conversation avec:', friend.id);
-    
-    if (!friend || !friend.id) {
-      Alert.alert('Erreur', 'Impossible de démarrer une conversation avec cet ami');
+  // Envoyer un message à un ami - FONCTION CORRIGÉE
+  const handleSendMessage = async (friend) => {
+    try {
+      setLoading(true);
+      
+      console.log('Démarrage conversation avec:', friend.id);
+      
+      if (!friend || !friend.id) {
+        Alert.alert('Erreur', 'Impossible de démarrer une conversation avec cet ami');
+        setLoading(false);
+        return;
+      }
+      
+      // 1. Vérifier si une conversation existe déjà avec cet ami
+      let conversationId = await findExistingConversation(friend.id);
+      let conversation = null;
+      
+      // 2. Si aucune conversation n'existe, en créer une nouvelle
+      if (!conversationId) {
+        console.log('Aucune conversation existante trouvée, création d\'une nouvelle...');
+        conversation = await createConversation([friend.id], false);
+        conversationId = conversation.id;
+        
+        // Sauvegarder l'association ami-conversation pour éviter de recréer à l'avenir
+        await AsyncStorage.setItem(`${FRIEND_CONVERSATION_KEY}${friend.id}`, conversationId);
+        console.log('Nouvelle conversation créée et sauvegardée:', conversationId);
+      } else {
+        console.log('Utilisation de la conversation existante:', conversationId);
+      }
+      
+      // 3. Naviguer vers l'écran de conversation
+      if (conversationId) {
+        navigation.navigate('ConversationScreen', {
+          chatId: conversationId,
+          chatName: friend.username || friend.display_name || 'Ami',
+          chatAvatar: friend.avatar_url || friend.profile_image,
+          otherUserId: friend.id
+        });
+      } else {
+        Alert.alert('Erreur', 'Impossible de créer ou trouver la conversation');
+      }
+    } catch (error) {
+      console.error('Erreur lors de la gestion de la conversation:', error);
+      Alert.alert('Erreur', 'Impossible de démarrer la conversation');
+    } finally {
       setLoading(false);
-      return;
     }
-    
-    // Utiliser directement la fonction createConversation
-    const conversation = await createConversation([friend.id], false);
-    
-    console.log('Conversation créée:', conversation);
-    
-    if (conversation && conversation.id) {
-      navigation.navigate('ConversationScreen', {
-        chatId: conversation.id, // Utiliser l'ID de la conversation
-        chatName: friend.username || friend.display_name || 'Ami',
-        chatAvatar: friend.avatar_url || friend.profile_image,
-        otherUserId: friend.id
-      });
-    } else {
-      Alert.alert('Erreur', 'Impossible de créer la conversation');
-    }
-  } catch (error) {
-    console.error('Erreur lors de la création de la conversation:', error);
-    Alert.alert('Erreur', 'Impossible de démarrer la conversation');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   // Supprimer un ami
   const handleRemoveFriend = (friendId) => {
