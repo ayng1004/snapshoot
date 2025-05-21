@@ -7,7 +7,8 @@ const router = express.Router();
 
 // Toutes les routes utilisateur nécessitent l'authentification
 router.use(authMiddleware);
-
+// Dans user.routes.js, ajoutez cette route AVANT la route paramétrée /:userId
+router.get('/', userController.getAllUsers);
 // Obtenir le profil de l'utilisateur connecté
 router.get('/me', userController.getCurrentUser);
 

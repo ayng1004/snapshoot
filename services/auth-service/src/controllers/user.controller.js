@@ -100,7 +100,30 @@ const getUserProfile = async (req, res) => {
     return res.status(500).json({ message: 'Erreur lors de la récupération du profil' });
   }
 };
-
+// Obtenir tous les utilisateurs - NOUVELLE FONCTION
+const getAllUsers = async (req, res) => {
+  try {
+    // Exclure l'utilisateur actuel et les utilisateurs inactifs
+    const users = await User.findAll({
+      attributes: ['id', 'email'],
+      include: {
+        model: Profile,
+        as: 'profile',
+        attributes: ['display_name', 'username', 'profile_image']
+      },
+      where: {
+        id: { [Op.ne]: req.user.id }, // Exclure l'utilisateur actuel
+        status: 'active' // Seulement les utilisateurs actifs
+      },
+      limit: 50 // Limiter pour des raisons de performance
+    });
+    
+    return res.status(200).json({ users });
+  } catch (error) {
+    logger.error(`Erreur lors de la récupération des utilisateurs: ${error.message}`);
+    return res.status(500).json({ message: 'Erreur lors de la récupération des utilisateurs' });
+  }
+};
 // Rechercher des utilisateurs
 const searchUsers = async (req, res) => {
   try {
@@ -142,5 +165,6 @@ module.exports = {
   updateCurrentUser,
   getUserById,
   getUserProfile,
-  searchUsers
+  searchUsers,
+  getAllUsers
 };

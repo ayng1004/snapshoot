@@ -61,8 +61,11 @@ const register = async (req, res) => {
 };
 
 // Connexion
+// Connexion
 const login = async (req, res) => {
   try {
+    console.log('Login function called with:', req.body);
+
     const { email, password } = req.body;
     
     // Rechercher l'utilisateur
@@ -72,7 +75,7 @@ const login = async (req, res) => {
     }
     
     // Vérifier si l'utilisateur est actif
-    if (user.status !== 'active') {
+    if (user.status && user.status !== 'active') {
       return res.status(403).json({ message: 'Compte désactivé. Contactez l\'administrateur.' });
     }
     
@@ -82,18 +85,22 @@ const login = async (req, res) => {
       return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
     }
     
-    // Mettre à jour la date de dernière connexion
-  // Mettre à jour la date de dernière connexion
-    await user.update({ last_login: new Date() });
+    // AJOUTEZ CETTE PARTIE QUI MANQUE :
+    console.log('Authentification réussie pour:', email);
     
-    // Générer le token JWT
+    // Générer un token JWT
     const token = generateToken(user);
     
-    // Charger le profil
+    // Mettre à jour la date de dernière connexion
+    await user.update({ last_login: new Date() });
+    
+    // Récupérer le profil utilisateur s'il existe
     const profile = await Profile.findOne({ where: { user_id: user.id } });
     
+    // Renvoyer la réponse
     return res.status(200).json({
       message: 'Connexion réussie',
+      token,
       user: {
         id: user.id,
         email: user.email,
@@ -101,12 +108,13 @@ const login = async (req, res) => {
       },
       profile: profile ? {
         display_name: profile.display_name,
-        username: profile.username,
-        profile_image: profile.profile_image
-      } : null,
-      token
+        bio: profile.bio,
+        profile_image: profile.profile_image,
+        location: profile.location
+      } : null
     });
   } catch (error) {
+    console.error('Erreur détaillée dans login:', error);
     logger.error(`Erreur lors de la connexion: ${error.message}`);
     return res.status(500).json({ message: 'Erreur lors de la connexion' });
   }

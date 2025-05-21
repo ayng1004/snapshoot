@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
@@ -19,9 +20,39 @@ import {
 import { 
   sendFriendRequest, 
   getReceivedRequests, 
-  acceptFriendRequest, 
+  acceptFriendRequest,
+  rejectFriendRequest,
   getFriends 
 } from '../api/friendsApi';
+
+// Importer apiClient pour les appels directs à l'API
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Créer un client API pour la fonction de recherche
+const API_BASE_URL = 'http://192.168.1.62:8080'; 
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 15000, // 15 secondes
+});
+
+// Intercepteur pour ajouter le token d'authentification
+apiClient.interceptors.request.use(
+  async (config) => {
+    const token = await AsyncStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 const FindFriendsScreen = ({ navigation, route }) => {
   const { user } = useAuth();
@@ -29,17 +60,24 @@ const FindFriendsScreen = ({ navigation, route }) => {
   const [searchResults, setSearchResults] = useState([]);
   const [suggestedFriends, setSuggestedFriends] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [friends, setFriends] = useState([]);
+  const [apiAccessible, setApiAccessible] = useState(true);
+
+  // Vérifier l'accessibilité de l'API lors du montage initial
   useEffect(() => {
     const checkApiConnection = async () => {
       try {
         // Tenter de charger le profil utilisateur actuel comme test de connexion
         await getProfile('me');
         console.log('API accessible');
+        setApiAccessible(true);
         return true;
       } catch (error) {
         console.error('API non accessible:', error);
+        setApiAccessible(false);
+        
         // Si l'API n'est pas accessible, utiliser des données factices
         Alert.alert(
           'Mode hors connexion',
@@ -53,197 +91,254 @@ const FindFriendsScreen = ({ navigation, route }) => {
     
     checkApiConnection();
   }, []);
-// Dans useEffect pour charger les données
-useEffect(() => {
-// Dans la fonction de chargement des données
-const loadFriendsData = async () => {
-  if (!user || !user.id) return;
-  
-  setLoading(true);
-  
-  try {
-    // Récupérer les amis existants
-    let friendsList = [];
+
+  // Fonction pour rafraîchir les données
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      friendsList = await getFriends(user.id);
-      console.log('Amis chargés:', friendsList);
-      setFriends(friendsList || []);
-    } catch (friendError) {
-      console.error('Erreur de chargement des amis:', friendError);
+      await loadFriendsData();
+      if (searchQuery.trim()) {
+        await searchFriends();
+      }
+    } catch (error) {
+      console.error('Erreur lors du rafraîchissement:', error);
+    } finally {
+      setRefreshing(false);
     }
-    
-    // Récupérer les demandes d'amis reçues
-    let requests = [];
-    try {
-      requests = await getReceivedRequests(user.id);
-      console.log('Demandes d\'amis reçues:', requests);
-    } catch (requestError) {
-      console.error('Erreur de chargement des demandes:', requestError);
-    }
-    
-    // Adapter le format en fonction de la structure réelle des données
-    const formattedRequests = requests.map(request => {
-      // Examiner la structure pour extraire correctement les données
-      const userId = request.profiles?.id || request.requester?.id || 'unknown';
-      const name = request.profiles?.username || request.requester?.profile?.display_name || 'Utilisateur';
-      const username = `@${request.profiles?.username || (request.requester?.email ? request.requester.email.split('@')[0] : 'user')}`;
-      const avatar = request.profiles?.avatar_url || request.requester?.profile?.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg';
-      
-      return {
-        id: request.id,
-        userId,
-        name,
-        username,
-        avatar,
-        requestTime: new Date(request.created_at || request.createdAt || Date.now())
-      };
-    });
-    
-    setPendingRequests(formattedRequests);
-    
-    // Charger des suggestions
-    let suggestedUsers = [];
-    try {
-      // Pour les suggestions, faire une recherche avec une requête vide peut ne pas fonctionner
-      // Utilisons des données fictives pour les suggestions
-      suggestedUsers = await searchUsers("a"); // Rechercher avec une lettre commune
-      console.log('Suggestions d\'utilisateurs:', suggestedUsers);
-    } catch (searchError) {
-      console.error('Erreur de recherche d\'utilisateurs:', searchError);
-    }
-    
-    // Si aucun résultat, utiliser des données factices pour les suggestions
-    if (!suggestedUsers || suggestedUsers.length === 0) {
-      useMockData();
-      setLoading(false);
-      return;
-    }
-    
-    // Filtrer les utilisateurs déjà amis et soi-même
-    const friendIds = new Set(friendsList.map(friend => friend.id));
-    const pendingIds = new Set(formattedRequests.map(req => req.userId));
-    
-    const filteredSuggestions = suggestedUsers
-      .filter(u => u.id !== user.id && !friendIds.has(u.id) && !pendingIds.has(u.id))
-      .map(user => ({
-        id: user.id,
-        name: user.display_name || user.username || (user.email ? user.email.split('@')[0] : 'Utilisateur'),
-        username: `@${user.username || (user.email ? user.email.split('@')[0] : 'user')}`,
-        avatar: user.avatar_url || user.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
-        mutualFriends: Math.floor(Math.random() * 10) // Simuler des amis en commun
-      }));
-    
-    // Si nous n'avons pas de suggestions après filtrage, utiliser des données factices
-    if (filteredSuggestions.length === 0) {
-      useMockData();
-    } else {
-      setSuggestedFriends(filteredSuggestions);
-    }
-  } catch (error) {
-    console.error('Erreur lors du chargement des données:', error);
-    useMockData();
-  } finally {
-    setLoading(false);
-  }
-};
-  
-  loadFriendsData();
-}, [user]);
-  // Fonction pour utiliser des données factices
-// Fonction pour utiliser des données factices
-const useMockData = () => {
-  console.log('Utilisation de données factices');
-  
-  const dummySuggestions = [
-    {
-      id: 'user1',
-      name: 'Thomas Martin',
-      username: '@tmartin',
-      avatar: 'https://randomuser.me/api/portraits/men/22.jpg',
-      mutualFriends: 5,
-    },
-    {
-      id: 'user2',
-      name: 'Sophie Dupont',
-      username: '@sdupont',
-      avatar: 'https://randomuser.me/api/portraits/women/33.jpg',
-      mutualFriends: 2,
-    },
-    {
-      id: 'user3',
-      name: 'Lucas Bernard',
-      username: '@lbernard',
-      avatar: 'https://randomuser.me/api/portraits/men/45.jpg',
-      mutualFriends: 8,
-    },
-  ];
-  
-  setSuggestedFriends(dummySuggestions);
-  
-  const dummyPendingRequests = [
-    {
-      id: 'req1',
-      userId: 'user4',
-      name: 'Emma Rousseau',
-      username: '@erousseau',
-      avatar: 'https://randomuser.me/api/portraits/women/55.jpg',
-      requestTime: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 heures avant
-    },
-    {
-      id: 'req2',
-      userId: 'user5',
-      name: 'Julien Petit',
-      username: '@jpetit',
-      avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
-      requestTime: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 jour avant
-    },
-  ];
-  
-  setPendingRequests(dummyPendingRequests);
-};
-  
-  // Fonction de recherche d'amis
-  const searchFriends = async () => {
-    if (!searchQuery.trim()) return;
+  }, [searchQuery]);
+
+  // Chargement des données amis
+  const loadFriendsData = useCallback(async () => {
+    if (!user || !user.id) return;
     
     setLoading(true);
     
     try {
-      // Rechercher des utilisateurs via l'API
-      const results = await searchUsers(searchQuery);
+      // Récupérer les amis existants
+      let friendsList = [];
+      try {
+        friendsList = await getFriends(user.id);
+        console.log('Amis chargés:', friendsList);
+        setFriends(friendsList || []);
+      } catch (friendError) {
+        console.error('Erreur de chargement des amis:', friendError);
+      }
+      
+      // Récupérer les demandes d'amis reçues
+      let requests = [];
+      try {
+        requests = await getReceivedRequests(user.id);
+        console.log('Demandes d\'amis reçues:', requests);
+      } catch (requestError) {
+        console.error('Erreur de chargement des demandes:', requestError);
+      }
+      
+      // Adapter le format en fonction de la structure réelle des données
+      const formattedRequests = requests.map(request => {
+        // Examiner la structure pour extraire correctement les données
+        const userId = request.profiles?.id || request.requester?.id || 'unknown';
+        const name = request.profiles?.username || request.requester?.profile?.display_name || 'Utilisateur';
+        const username = `@${request.profiles?.username || (request.requester?.email ? request.requester.email.split('@')[0] : 'user')}`;
+        const avatar = request.profiles?.avatar_url || request.requester?.profile?.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg';
+        
+        return {
+          id: request.id,
+          userId,
+          name,
+          username,
+          avatar,
+          requestTime: new Date(request.created_at || request.createdAt || Date.now())
+        };
+      });
+      
+      setPendingRequests(formattedRequests);
+      
+      // Pour les suggestions, dans un environnement de développement, 
+      // on utilise directement des données fictives pour l'instant
+      // Cela sera remplacé par une recherche réelle plus tard
+      try {
+        // Utiliser un terme de recherche qui répond aux critères, 
+        // mais avec peu de chances de trouver des résultats inutiles
+        // On pourrait utiliser, par exemple, le début du nom d'utilisateur actuel
+        const searchTerm = user.email?.substring(0, 3) || "use";
+        console.log(`Recherche de suggestions avec le terme: ${searchTerm}`);
+        
+        const suggestedUsers = await searchUsers(searchTerm);
+        console.log('Suggestions d\'utilisateurs:', suggestedUsers);
+        
+        // Filtrer les utilisateurs déjà amis et soi-même
+        const friendIds = new Set(friendsList.map(friend => friend.id));
+        const pendingIds = new Set(formattedRequests.map(req => req.userId));
+        
+        const filteredSuggestions = suggestedUsers
+          .filter(u => {
+            // Vérifier que l'utilisateur n'est pas nous-même
+            const isCurrentUser = u.id === user.id;
+            // Vérifier qu'il n'est pas déjà ami
+            const isAlreadyFriend = friendIds.has(u.id);
+            // Vérifier qu'une demande n'est pas déjà en cours
+            const isPending = pendingIds.has(u.id);
+            
+            return !isCurrentUser && !isAlreadyFriend && !isPending;
+          })
+          .map(user => ({
+            id: user.id,
+            name: user.display_name || user.profile?.display_name || user.username || (user.email ? user.email.split('@')[0] : 'Utilisateur'),
+            username: `@${user.username || user.profile?.username || (user.email ? user.email.split('@')[0] : 'user')}`,
+            avatar: user.avatar_url || user.profile_image || user.profile?.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
+            mutualFriends: Math.floor(Math.random() * 10) // Simuler des amis en commun
+          }));
+        
+        console.log('Suggestions filtrées:', filteredSuggestions);
+        
+        if (filteredSuggestions.length > 0) {
+          setSuggestedFriends(filteredSuggestions);
+          setApiAccessible(true);
+        } else {
+          console.log('Aucune suggestion après filtrage, utilisation de données fictives');
+          useMockData();
+        }
+      } catch (error) {
+        console.error('Erreur lors de la récupération des suggestions:', error);
+        useMockData();
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement des données:', error);
+      useMockData();
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  // Charger les données au démarrage
+  useEffect(() => {
+    loadFriendsData();
+  }, [loadFriendsData]);
+
+  // Fonction pour utiliser des données factices
+  const useMockData = () => {
+    console.log('Utilisation de données factices');
+    
+    const dummySuggestions = [
+      {
+        id: 'mock-user1',
+        name: 'Thomas Martin',
+        username: '@tmartin',
+        avatar: 'https://randomuser.me/api/portraits/men/22.jpg',
+        mutualFriends: 5,
+      },
+      {
+        id: 'mock-user2',
+        name: 'Sophie Dupont',
+        username: '@sdupont',
+        avatar: 'https://randomuser.me/api/portraits/women/33.jpg',
+        mutualFriends: 2,
+      },
+      {
+        id: 'mock-user3',
+        name: 'Lucas Bernard',
+        username: '@lbernard',
+        avatar: 'https://randomuser.me/api/portraits/men/45.jpg',
+        mutualFriends: 8,
+      },
+    ];
+    
+    setSuggestedFriends(dummySuggestions);
+    
+    const dummyPendingRequests = [
+      {
+        id: 'mock-req1',
+        userId: 'mock-user4',
+        name: 'Emma Rousseau',
+        username: '@erousseau',
+        avatar: 'https://randomuser.me/api/portraits/women/55.jpg',
+        requestTime: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 heures avant
+      },
+      {
+        id: 'mock-req2',
+        userId: 'mock-user5',
+        name: 'Julien Petit',
+        username: '@jpetit',
+        avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
+        requestTime: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 jour avant
+      },
+    ];
+    
+    setPendingRequests(dummyPendingRequests);
+  };
+  
+  // Fonction de recherche d'amis (appelée quand l'utilisateur soumet la recherche)
+  const searchFriends = async () => {
+    if (!searchQuery.trim()) {
+      Alert.alert('Erreur', 'Veuillez entrer un terme de recherche');
+      return;
+    }
+    
+    if (searchQuery.trim().length < 3) {
+      Alert.alert('Erreur', 'Le terme de recherche doit contenir au moins 3 caractères');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      console.log(`Recherche de "${searchQuery}" en cours...`);
+      
+      // Appel direct à l'API de recherche
+      const response = await apiClient.get('/api/users/search', {
+        params: { query: searchQuery.trim() }
+      });
+      
+      console.log('Réponse de la recherche:', response.data);
+      
+      // Extraire les utilisateurs trouvés
+      let results = [];
+      if (response.data && response.data.users) {
+        results = response.data.users;
+      } else if (Array.isArray(response.data)) {
+        results = response.data;
+      }
+      
+      console.log(`Trouvé ${results.length} utilisateurs pour "${searchQuery}"`);
+      
+      // Si aucun résultat, afficher un message
+      if (results.length === 0) {
+        Alert.alert('Information', 'Aucun utilisateur trouvé avec ce terme de recherche');
+        setSearchResults([]);
+        return;
+      }
       
       // Filtrer les utilisateurs déjà amis et soi-même
       const friendIds = new Set(friends.map(friend => friend.id));
       const pendingIds = new Set(pendingRequests.map(req => req.userId));
       
       const formattedResults = results
-        .filter(u => u.id !== user.id && !friendIds.has(u.id) && !pendingIds.has(u.id))
-        .map(user => ({
-          id: user.id,
-          name: user.username || user.display_name || 'Utilisateur',
-          username: `@${user.username || 'user'}`,
-          avatar: user.avatar_url || user.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
-          email: user.email
+        .filter(u => {
+          const isCurrentUser = u.id === user.id;
+          const isAlreadyFriend = friendIds.has(u.id);
+          const isPending = pendingIds.has(u.id);
+          
+          return !isCurrentUser && !isAlreadyFriend && !isPending;
+        })
+        .map(u => ({
+          id: u.id,
+          name: u.display_name || u.profile?.display_name || u.username || u.email?.split('@')[0] || 'Utilisateur',
+          username: `@${u.username || u.profile?.username || u.email?.split('@')[0] || 'user'}`,
+          avatar: u.avatar_url || u.profile_image || u.profile?.profile_image || 'https://randomuser.me/api/portraits/lego/1.jpg',
+          email: u.email
         }));
       
+      // Mettre à jour les résultats
       setSearchResults(formattedResults);
+      
+      // Si après filtrage il n'y a plus de résultats
+      if (formattedResults.length === 0) {
+        Alert.alert('Information', 'Les utilisateurs trouvés sont déjà vos amis ou ont déjà des demandes en attente');
+      }
     } catch (error) {
       console.error('Erreur lors de la recherche:', error);
-      
-      // En cas d'erreur, simuler un résultat
-      if (searchQuery.includes('@')) {
-        setSearchResults([
-          {
-            id: 'search1',
-            name: 'Utilisateur Trouvé',
-            username: searchQuery,
-            avatar: 'https://randomuser.me/api/portraits/women/71.jpg',
-            email: searchQuery,
-          }
-        ]);
-      } else {
-        Alert.alert('Erreur', 'Impossible de compléter la recherche');
-      }
+      Alert.alert('Erreur', 'Impossible de compléter la recherche. Vérifiez votre connexion.');
+      setSearchResults([]);
     } finally {
       setLoading(false);
     }
@@ -257,19 +352,45 @@ const useMockData = () => {
     }
     
     try {
-      await sendFriendRequest(user.id, userId);
+      setLoading(true);
+      
+      // Si l'ID commence par "mock", c'est un utilisateur fictif
+      // On simule seulement l'envoi pour une meilleure UX
+      const isMockUser = userId.startsWith('mock-');
+      
+      if (isMockUser) {
+        console.log(`Simulation d'envoi d'une demande d'ami à un utilisateur fictif: ${userId}`);
+        
+        // Attendre un peu pour simuler un appel réseau
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Mise à jour UI immédiate
+        setSearchResults(prev => prev.filter(result => result.id !== userId));
+        setSuggestedFriends(prev => prev.filter(suggestion => suggestion.id !== userId));
+        
+        Alert.alert('Succès', 'Demande d\'ami envoyée ! (Mode démonstration)');
+        return;
+      }
+      
+      // Cas d'un vrai utilisateur
+      const response = await sendFriendRequest(user.id, userId);
+      console.log('Réponse d\'envoi de demande d\'ami:', response);
+      
+      // Vérifier si c'est une erreur simulée
+      if (response.error) {
+        throw new Error(response.message || 'Erreur lors de l\'envoi de la demande');
+      }
       
       // Mettre à jour l'interface utilisateur
-      // Retirer l'utilisateur des résultats de recherche
       setSearchResults(prev => prev.filter(result => result.id !== userId));
-      
-      // Retirer également des suggestions
       setSuggestedFriends(prev => prev.filter(suggestion => suggestion.id !== userId));
       
       Alert.alert('Succès', 'Demande d\'ami envoyée !');
     } catch (error) {
       console.error('Erreur lors de l\'envoi de la demande:', error);
-      Alert.alert('Erreur', 'Impossible d\'envoyer la demande d\'ami');
+      Alert.alert('Erreur', error.message || 'Impossible d\'envoyer la demande d\'ami');
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -315,10 +436,9 @@ const useMockData = () => {
   // Fonction pour refuser une demande d'ami
   const handleRejectFriendRequest = async (requestId) => {
     try {
-      // Ici, implémentez l'appel API pour rejeter la demande
-      // await rejectFriendRequest(requestId);
+      await rejectFriendRequest(requestId);
       
-      // Pour l'instant, nous mettons simplement à jour l'interface
+      // Mettre à jour l'interface utilisateur
       setPendingRequests(prev => prev.filter(request => request.id !== requestId));
       
       Alert.alert('Succès', 'Demande d\'ami refusée');
@@ -433,6 +553,13 @@ const useMockData = () => {
         <Text style={styles.headerTitle}>Trouver des amis</Text>
       </View>
       
+      {!apiAccessible && (
+        <View style={styles.offlineBar}>
+          <Ionicons name="cloud-offline" size={16} color="white" />
+          <Text style={styles.offlineText}>Mode hors connexion - Données fictives</Text>
+        </View>
+      )}
+      
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
         <TextInput
@@ -445,45 +572,64 @@ const useMockData = () => {
         />
       </View>
       
-      {loading ? (
+      {loading && !refreshing ? (
         <ActivityIndicator size="large" color="#6C13B3" style={styles.loader} />
       ) : (
-        <>
-          {searchResults.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Résultats de recherche</Text>
-              <FlatList
-                data={searchResults}
-                renderItem={renderSearchResult}
-                keyExtractor={item => item.id}
-                showsVerticalScrollIndicator={false}
-              />
-            </View>
-          )}
-          
-          {pendingRequests.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Demandes d'amis</Text>
-              <FlatList
-                data={pendingRequests}
-                renderItem={renderPendingRequest}
-                keyExtractor={item => item.id}
-                showsVerticalScrollIndicator={false}
-                scrollEnabled={false}
-              />
-            </View>
-          )}
-          
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Suggestions</Text>
-            <FlatList
-              data={suggestedFriends}
-              renderItem={renderSuggestedFriend}
-              keyExtractor={item => item.id}
-              showsVerticalScrollIndicator={false}
+        <FlatList
+          contentContainerStyle={styles.listContainer}
+          ListHeaderComponent={
+            <>
+              {searchResults.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Résultats de recherche</Text>
+                  <FlatList
+                    data={searchResults}
+                    renderItem={renderSearchResult}
+                    keyExtractor={item => item.id}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={false}
+                  />
+                </View>
+              )}
+              
+              {pendingRequests.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Demandes d'amis</Text>
+                  <FlatList
+                    data={pendingRequests}
+                    renderItem={renderPendingRequest}
+                    keyExtractor={item => item.id}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={false}
+                  />
+                </View>
+              )}
+              
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Suggestions</Text>
+              </View>
+            </>
+          }
+          data={suggestedFriends}
+          renderItem={renderSuggestedFriend}
+          keyExtractor={item => item.id}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#6C13B3']}
             />
-          </View>
-        </>
+          }
+          ListEmptyComponent={
+            !loading && (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="people" size={50} color="#ccc" />
+                <Text style={styles.emptyText}>Aucune suggestion trouvée</Text>
+              </View>
+            )
+          }
+        />
       )}
     </View>
   );
@@ -509,6 +655,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 15,
   },
+  offlineBar: {
+    backgroundColor: '#FF5252',
+    padding: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  offlineText: {
+    color: 'white',
+    marginLeft: 8,
+    fontWeight: '500',
+  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -524,6 +683,9 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     height: '100%',
+  },
+  listContainer: {
+    flexGrow: 1,
   },
   loader: {
     marginTop: 20,
@@ -598,6 +760,15 @@ const styles = StyleSheet.create({
   },
   rejectButton: {
     backgroundColor: '#F44336',
+  },
+  emptyContainer: {
+    padding: 30,
+    alignItems: 'center',
+  },
+  emptyText: {
+    marginTop: 10,
+    color: '#999',
+    fontSize: 16,
   },
 });
 

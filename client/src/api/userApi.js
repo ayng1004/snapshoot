@@ -2,8 +2,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// URL de base de l'API Gateway - Remplacez par l'adresse de votre API Gateway
-const API_BASE_URL = 'http://192.168.1.50:8080'; // À changer avec votre adresse IP
+// URL de base de l'API Gateway
+const API_BASE_URL = 'http://192.168.1.62:8080'; 
 
 // Client axios avec configuration de base
 const apiClient = axios.create({
@@ -11,7 +11,7 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // 10 secondes
+  timeout: 15000, // 15 secondes
 });
 
 // Intercepteur pour ajouter le token d'authentification
@@ -21,6 +21,7 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
@@ -28,28 +29,55 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Gestion des erreurs
-const handleApiError = (error) => {
-  console.error('API Error:', error.response?.data || error.message);
-  if (error.response?.status === 401) {
-    // Token expiré ou invalide
-    AsyncStorage.removeItem('auth_token');
-    AsyncStorage.removeItem('user');
-    // Vous pourriez ajouter ici une logique pour rediriger vers la page de login
+// Intercepteur pour logger les réponses
+apiClient.interceptors.response.use(
+  (response) => {
+    console.log(`API Response: ${response.status} ${response.config.url}`);
+    return response;
+  },
+  (error) => {
+    if (error.response) {
+      console.error(`API Error: ${error.response.status} ${error.config?.url || 'Unknown URL'}`);
+    } else if (error.request) {
+      console.error(`API Request Error: No response received ${error.config?.url || 'Unknown URL'}`);
+    } else {
+      console.error(`API Setup Error: ${error.message}`);
+    }
+    return Promise.reject(error);
   }
-  
-  // Renvoyer un message d'erreur plus convivial
-  const errorMessage = error.response?.data?.message || 'Une erreur s\'est produite';
-  throw new Error(errorMessage);
-};
+);
 
-// Dans src/api/userApi.js
+// Données fictives pour le mode hors-ligne ou si aucun utilisateur n'est trouvé
+const MOCK_USERS = [
+  {
+    id: 'mock-uuid-1',
+    display_name: 'Marie Dubois',
+    email: 'marie.dubois@example.com',
+    profile_image: 'https://randomuser.me/api/portraits/women/12.jpg'
+  },
+  {
+    id: 'mock-uuid-2',
+    display_name: 'Paul Martin',
+    email: 'paul.martin@example.com',
+    profile_image: 'https://randomuser.me/api/portraits/men/32.jpg'
+  },
+  {
+    id: 'mock-uuid-3',
+    display_name: 'Claire Fontaine',
+    email: 'claire.fontaine@example.com',
+    profile_image: 'https://randomuser.me/api/portraits/women/47.jpg'
+  }
+];
+
+// Récupérer le profil utilisateur
 export const getProfile = async (userId) => {
   try {
+    console.log('Récupération du profil pour', userId || 'moi-même');
+    
     // Si c'est pour l'utilisateur actuel, utilisez la route "me"
     if (!userId || userId === 'me') {
       const response = await apiClient.get('/api/users/me');
-      console.log('Profile response:', response.data);
+      console.log('Réponse du profil (me):', response.data);
       
       // Adapter selon la structure de réponse API
       if (response.data.user && response.data.user.profile) {
@@ -62,9 +90,9 @@ export const getProfile = async (userId) => {
       
       return response.data;
     } else {
-      // Sinon, utilisez la route avec l'ID spécifique
+      // Pour un utilisateur spécifique, utilisez la route avec l'ID
       const response = await apiClient.get(`/api/users/${userId}`);
-      console.log('Profile response:', response.data);
+      console.log('Réponse du profil (userId):', response.data);
       
       // Adapter selon la structure de réponse API
       if (response.data.user && response.data.user.profile) {
@@ -90,55 +118,59 @@ export const getProfile = async (userId) => {
     };
   }
 };
-// Récupérer le profil de l'utilisateur actuel
-export const getCurrentUser = async () => {
-  try {
-    const response = await apiClient.get('/api/auth/me');
-    return response.data;
-  } catch (error) {
-    handleApiError(error);
-  }
-};
 
 // Mettre à jour le profil d'un utilisateur
 export const updateProfile = async (profileData) => {
   try {
+    console.log('Mise à jour du profil avec les données:', profileData);
     const response = await apiClient.put('/api/users/me', profileData);
+    console.log('Réponse de mise à jour du profil:', response.data);
     return response.data;
   } catch (error) {
-    handleApiError(error);
+    console.error('Erreur lors de la mise à jour du profil:', error);
+    throw new Error(error.response?.data?.message || 'Erreur lors de la mise à jour du profil');
   }
 };
 
-// Rechercher des utilisateurs
-// Rechercher des utilisateurs
-// Rechercher des utilisateurs - Version factice
-// Rechercher des utilisateurs - Version factice
+// Recherche d'utilisateurs - Utilise uniquement la route /api/users/search
 export const searchUsers = async (query) => {
-  console.log('Recherche d\'utilisateurs en mode démo avec terme:', query);
+  console.log('Recherche d\'utilisateurs avec terme:', query);
   
-  // Simuler un délai réseau
-  await new Promise(resolve => setTimeout(resolve, 500));
+  // Si le terme de recherche est trop court, retourner directement les données fictives
+  if (!query || query.trim().length < 3) {
+    console.log('Terme de recherche trop court, retour des données fictives');
+    return MOCK_USERS;
+  }
   
-  // Générer des utilisateurs fictifs
-  return [
-    {
-      id: 'user1',
-      display_name: 'Marie Dubois',
-      email: 'marie.dubois@example.com',
-      profile_image: 'https://randomuser.me/api/portraits/women/12.jpg'
-    },
-    {
-      id: 'user2',
-      display_name: 'Paul Martin',
-      email: 'paul.martin@example.com',
-      profile_image: 'https://randomuser.me/api/portraits/men/32.jpg'
-    },
-    {
-      id: 'user3',
-      display_name: 'Claire Fontaine',
-      email: 'claire.fontaine@example.com',
-      profile_image: 'https://randomuser.me/api/portraits/women/47.jpg'
+  try {
+    // Utiliser uniquement la route de recherche qui existe
+    const response = await apiClient.get('/api/users/search', {
+      params: { query: query.trim() }
+    });
+    
+    console.log('Réponse de recherche d\'utilisateurs:', response.data);
+    
+    // Extraire les utilisateurs de la réponse
+    let users = [];
+    if (response.data && response.data.users) {
+      users = response.data.users;
+    } else if (Array.isArray(response.data)) {
+      users = response.data;
     }
-  ];
+    
+    console.log(`Trouvé ${users.length} utilisateurs pour la recherche "${query}"`);
+    
+    // Si des utilisateurs sont trouvés, les renvoyer
+    if (users && users.length > 0) {
+      return users;
+    }
+    
+    // Sinon, retourner les données fictives
+    console.log('Aucun utilisateur trouvé, retour des données fictives');
+    return MOCK_USERS;
+  } catch (error) {
+    console.error('Erreur lors de la recherche d\'utilisateurs:', error);
+    console.log('Retour des données fictives suite à l\'erreur');
+    return MOCK_USERS;
+  }
 };

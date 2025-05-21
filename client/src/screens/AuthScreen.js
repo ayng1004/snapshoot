@@ -53,6 +53,7 @@ const AuthScreen = () => {
       } else {
         await signUp(email, password, displayName);
       }
+   
     } catch (error) {
       // Affichage de l'erreur
       Alert.alert(

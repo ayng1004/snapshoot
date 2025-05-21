@@ -1,10 +1,12 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 
 // URL de base de l'API Gateway
-// Remplacez cette URL par l'adresse IP ou le nom d'hôte de votre machine
-// où tourne l'API Gateway via Docker
-const API_BASE_URL = 'http://192.168.1.50:8080'; // À ajuster selon votre configuration
+// Modifiez cette URL pour correspondre à votre API Gateway
+// const API_BASE_URL = 'http://10.0.2.2:3000'; // Pour l'émulateur Android
+// const API_BASE_URL = 'http://localhost:3000'; // Pour iOS simulator
+const API_BASE_URL = 'http://192.168.1.62:8080'; // Port 8080 pour l'API Gateway
 
 class ApiClient {
   constructor() {
@@ -13,7 +15,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      timeout: 10000, // 10 secondes
+      timeout: 15000, // Augmentation du timeout à 15 secondes
     });
     
     // Intercepteur pour ajouter le token à chaque requête
@@ -51,6 +53,23 @@ class ApiClient {
     );
   }
   
+  // Méthode pour vérifier la connexion à l'API
+  async checkApiConnection() {
+    try {
+      const response = await this.client.get('/health');
+      console.log('API Gateway status:', response.data);
+      return true;
+    } catch (error) {
+      console.error('Impossible de se connecter à l\'API Gateway:', error);
+      Alert.alert(
+        'Erreur de connexion',
+        'Impossible de se connecter au serveur. Vérifiez votre connexion réseau ou réessayez plus tard.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+  }
+  
   // Méthodes HTTP
   async get(url, config = {}) {
     try {
@@ -64,7 +83,9 @@ class ApiClient {
   
   async post(url, data = {}, config = {}) {
     try {
+      console.log(`POST request to ${url} with data:`, data);
       const response = await this.client.post(url, data, config);
+      console.log(`Response from ${url}:`, response.data);
       return response.data;
     } catch (error) {
       this._handleError(error);
@@ -130,8 +151,21 @@ class ApiClient {
   
   // Gestion d'erreur
   _handleError(error) {
-    // On peut ajouter ici une logique de journalisation des erreurs
-    console.error('API Error:', error.response?.data || error.message);
+    // Journalisation de l'erreur
+    if (error.response) {
+      // La requête a été faite et le serveur a répondu avec un code d'état
+      console.error('API Error Response:', {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers
+      });
+    } else if (error.request) {
+      // La requête a été faite mais pas de réponse
+      console.error('API Error Request:', error.request);
+    } else {
+      // Une erreur s'est produite lors de la configuration de la requête
+      console.error('API Error Setup:', error.message);
+    }
   }
   
   // Fonctions d'authentification
@@ -142,6 +176,11 @@ class ApiClient {
       if (response.token && response.user) {
         await AsyncStorage.setItem('auth_token', response.token);
         await AsyncStorage.setItem('user', JSON.stringify(response.user));
+        
+        // Stocker le profil s'il existe
+        if (response.profile) {
+          await AsyncStorage.setItem('user_profile', JSON.stringify(response.profile));
+        }
       }
       
       return response;
@@ -153,7 +192,12 @@ class ApiClient {
   
   async register(email, password, displayName) {
     try {
-      const response = await this.post('/api/auth/register', { email, password, displayName });
+      // Alignement avec le backend: le contrôleur attend email, password, displayName
+      const response = await this.post('/api/auth/register', { 
+        email, 
+        password, 
+        displayName 
+      });
       
       if (response.token && response.user) {
         await AsyncStorage.setItem('auth_token', response.token);
@@ -173,13 +217,50 @@ class ApiClient {
       
       await AsyncStorage.removeItem('auth_token');
       await AsyncStorage.removeItem('user');
+      await AsyncStorage.removeItem('user_profile');
       
       return { success: true };
     } catch (error) {
       // Même en cas d'erreur, on supprime les données locales
       await AsyncStorage.removeItem('auth_token');
       await AsyncStorage.removeItem('user');
+      await AsyncStorage.removeItem('user_profile');
       
+      this._handleError(error);
+      throw error;
+    }
+  }
+  
+  // Récupération du profil utilisateur
+  async getUserProfile() {
+    try {
+      const response = await this.get('/api/users/me');
+      
+      if (response.user && (response.user.profile || response.profile)) {
+        const profileData = response.user.profile || response.profile;
+        await AsyncStorage.setItem('user_profile', JSON.stringify(profileData));
+        return profileData;
+      }
+      
+      return null;
+    } catch (error) {
+      this._handleError(error);
+      throw error;
+    }
+  }
+  
+  // Mise à jour du profil utilisateur
+  async updateUserProfile(profileData) {
+    try {
+      const response = await this.put('/api/users/me', profileData);
+      
+      if (response.profile) {
+        await AsyncStorage.setItem('user_profile', JSON.stringify(response.profile));
+        return response.profile;
+      }
+      
+      return null;
+    } catch (error) {
       this._handleError(error);
       throw error;
     }
