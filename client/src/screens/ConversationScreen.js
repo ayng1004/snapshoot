@@ -11,7 +11,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert
+  Alert,
+  StatusBar,
+  SafeAreaView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,7 +28,7 @@ const MESSAGES_KEY_PREFIX = 'local_messages_';
 const USER_ID_KEY = 'local_user_id';
 
 const ConversationScreen = ({ route, navigation }) => {
-  const { chatId, chatName, chatAvatar } = route.params || {};
+  const { chatId, chatName, chatAvatar, otherUserId } = route.params || {};
   const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -37,6 +39,7 @@ const ConversationScreen = ({ route, navigation }) => {
   const messagePollingInterval = useRef(null);
   const [lastMessageId, setLastMessageId] = useState(null);
   const conversationIdRef = useRef(chatId);
+  const [contactStatus, setContactStatus] = useState('En ligne');
 
   // Débogage de l'ID utilisateur
   useEffect(() => {
@@ -70,26 +73,14 @@ const ConversationScreen = ({ route, navigation }) => {
     // Stocker l'ID de conversation pour référence
     conversationIdRef.current = chatId;
     
-    if (chatName) {
-      navigation.setOptions({
-        title: chatName,
-        headerRight: () => (
-          <View style={styles.headerRight}>
-            <TouchableOpacity 
-              style={styles.headerButton}
-              onPress={() => navigation.navigate('ChatInfoScreen', { chatId })}
-            >
-              {chatAvatar && (
-                <Image 
-                  source={{ uri: chatAvatar }}
-                  style={styles.headerAvatar}
-                />
-              )}
-            </TouchableOpacity>
-          </View>
-        ),
-      });
-    }
+    // Simuler un statut du contact qui change
+    const statusTimer = setTimeout(() => {
+      const statuses = ['En ligne', 'Vu à 12:34', 'En train d\'écrire...'];
+      const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
+      setContactStatus(randomStatus);
+    }, 3000);
+    
+    return () => clearTimeout(statusTimer);
   }, [navigation, chatId, chatName, chatAvatar]);
 
   // Charger les messages
@@ -181,6 +172,32 @@ const ConversationScreen = ({ route, navigation }) => {
     };
   }, [chatId]);
 
+  // Option pour prendre une photo avec la caméra
+  const takePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission refusée', 'Nous avons besoin de votre permission pour accéder à la caméra.');
+        return;
+      }
+      
+      // Navigation vers l'écran de caméra (à définir)
+      navigation.navigate('CameraScreen', {
+        onPhotoTaken: (photoUri) => {
+          // Cette fonction sera appelée lorsqu'une photo est prise
+          setMedia({
+            uri: photoUri,
+            type: 'image'
+          });
+        }
+      });
+    } catch (error) {
+      console.error('Erreur lors de l\'accès à la caméra:', error);
+      Alert.alert('Erreur', 'Impossible d\'accéder à la caméra');
+    }
+  };
+
   // Sélectionner une image à envoyer
   const pickImage = async () => {
     try {
@@ -208,6 +225,19 @@ const ConversationScreen = ({ route, navigation }) => {
       console.error('Erreur lors de la sélection du média:', error);
       Alert.alert('Erreur', 'Impossible de sélectionner le média');
     }
+  };
+
+  // Afficher les options médias
+  const showMediaOptions = () => {
+    Alert.alert(
+      'Envoyer un média',
+      'Choisissez une option',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Prendre une photo', onPress: takePhoto },
+        { text: 'Choisir depuis la galerie', onPress: pickImage }
+      ]
+    );
   };
 
   // Envoyer un message
@@ -331,7 +361,7 @@ const ConversationScreen = ({ route, navigation }) => {
       ]}>
         {!isCurrentUser && (
           <Image 
-            source={{ uri: 'https://randomuser.me/api/portraits/lego/1.jpg' }} 
+            source={{ uri: chatAvatar || 'https://randomuser.me/api/portraits/lego/1.jpg' }} 
             style={styles.messageAvatar} 
           />
         )}
@@ -376,83 +406,145 @@ const ConversationScreen = ({ route, navigation }) => {
     );
   };
 
+  // Header personnalisé
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <TouchableOpacity 
+        style={styles.backButton}
+        onPress={() => navigation.goBack()}
+      >
+        <Ionicons name="arrow-back" size={24} color="#6C13B3" />
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={styles.profileContainer}
+        onPress={() => navigation.navigate('ProfileScreen', { userId: otherUserId })}
+      >
+        <Image 
+          source={{ uri: chatAvatar || 'https://randomuser.me/api/portraits/lego/1.jpg' }} 
+          style={styles.headerAvatar} 
+        />
+        <View style={styles.headerTextContainer}>
+          <Text style={styles.headerTitle}>{chatName || 'Discussion'}</Text>
+          <Text style={styles.headerSubtitle}>{contactStatus}</Text>
+        </View>
+      </TouchableOpacity>
+      
+      <View style={styles.headerActions}>
+        <TouchableOpacity 
+          style={styles.headerButton}
+          onPress={takePhoto}
+        >
+          <Ionicons name="camera" size={24} color="#6C13B3" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.headerButton}
+          onPress={() => navigation.navigate('ChatInfoScreen', { chatId })}
+        >
+          <Ionicons name="ellipsis-vertical" size={24} color="#6C13B3" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   // Afficher un indicateur de chargement
   if (loading) {
     return (
-      <View style={[styles.container, styles.loadingContainer]}>
+      <SafeAreaView style={[styles.container, styles.loadingContainer]}>
+        {renderHeader()}
         <ActivityIndicator size="large" color="#6C13B3" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={item => item.id}
-        style={styles.messagesList}
-        contentContainerStyle={styles.messagesContainer}
-        onContentSizeChange={() => {
-          if (flatListRef.current && messages.length > 0) {
-            flatListRef.current.scrollToEnd({ animated: false });
+    <SafeAreaView style={styles.container}>
+      <StatusBar backgroundColor="#FFF" barStyle="dark-content" />
+      {renderHeader()}
+      
+      <KeyboardAvoidingView
+        style={styles.flexContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={item => item.id}
+          style={styles.messagesList}
+          contentContainerStyle={styles.messagesContainer}
+          onContentSizeChange={() => {
+            if (flatListRef.current && messages.length > 0) {
+              flatListRef.current.scrollToEnd({ animated: false });
+            }
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Aucun message</Text>
+              <Text style={styles.emptySubtext}>Envoyez votre premier message pour démarrer la conversation!</Text>
+            </View>
           }
-        }}
-      />
-      
-      {media && (
-        <View style={styles.mediaPreviewContainer}>
-          <Image 
-            source={{ uri: media.uri }} 
-            style={styles.mediaPreview}
-          />
-          <TouchableOpacity 
-            style={styles.removeMediaButton}
-            onPress={() => setMedia(null)}
-          >
-            <Ionicons name="close-circle" size={24} color="white" />
-          </TouchableOpacity>
-        </View>
-      )}
-      
-      <View style={styles.inputContainer}>
-        <TouchableOpacity 
-          style={styles.attachButton}
-          onPress={pickImage}
-        >
-          <Ionicons name="image-outline" size={24} color="#6C13B3" />
-        </TouchableOpacity>
-        
-        <TextInput
-          style={styles.input}
-          placeholder="Message..."
-          value={inputText}
-          onChangeText={setInputText}
-          multiline
-          maxLength={1000}
         />
         
-        <TouchableOpacity 
-          style={[
-            styles.sendButton,
-            (!inputText.trim() && !media) || sending ? styles.sendButtonDisabled : null
-          ]}
-          onPress={handleSend}
-          disabled={(!inputText.trim() && !media) || sending}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="white" />
+        {media && (
+          <View style={styles.mediaPreviewContainer}>
+            <Image 
+              source={{ uri: media.uri }} 
+              style={styles.mediaPreview}
+            />
+            <TouchableOpacity 
+              style={styles.removeMediaButton}
+              onPress={() => setMedia(null)}
+            >
+              <Ionicons name="close-circle" size={24} color="white" />
+            </TouchableOpacity>
+          </View>
+        )}
+        
+        <View style={styles.inputContainer}>
+          <TouchableOpacity 
+            style={styles.attachButton}
+            onPress={showMediaOptions}
+          >
+            <Ionicons name="add-circle" size={28} color="#6C13B3" />
+          </TouchableOpacity>
+          
+          <TextInput
+            style={styles.input}
+            placeholder="Message..."
+            value={inputText}
+            onChangeText={setInputText}
+            multiline
+            maxLength={1000}
+          />
+          
+          {inputText.trim() || media ? (
+            <TouchableOpacity 
+              style={[
+                styles.sendButton,
+                sending ? styles.sendButtonDisabled : null
+              ]}
+              onPress={handleSend}
+              disabled={sending}
+            >
+              {sending ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Ionicons name="send" size={20} color="white" />
+              )}
+            </TouchableOpacity>
           ) : (
-            <Ionicons name="send" size={20} color="white" />
+            <TouchableOpacity 
+              style={styles.micButton}
+              onPress={() => Alert.alert('Info', 'Fonction vocale non disponible')}
+            >
+              <Ionicons name="mic" size={24} color="#6C13B3" />
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
@@ -460,25 +552,62 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingTop:60
+  },
+  flexContainer: {
+    flex: 1,
   },
   loadingContainer: {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerRight: {
+  // Styles du header
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    backgroundColor: '#fff',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
-  headerButton: {
+  backButton: {
     padding: 5,
   },
-  headerAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+  profileContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
   },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  headerTextContainer: {
+    marginLeft: 10,
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#666',
+  },
+  headerActions: {
+    flexDirection: 'row',
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 5,
+  },
+  // Messages
   messagesList: {
     flex: 1,
     paddingHorizontal: 10,
@@ -548,6 +677,7 @@ const styles = StyleSheet.create({
   otherUserTime: {
     color: '#999',
   },
+  // Média
   mediaContainer: {
     borderRadius: 15,
     overflow: 'hidden',
@@ -576,6 +706,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     borderRadius: 15,
   },
+  // Saisie
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -604,9 +735,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  micButton: {
+    padding: 5,
+  },
   sendButtonDisabled: {
     backgroundColor: '#ccc',
   },
+  // Aucun message
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+    marginTop: 40,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#999',
+    marginBottom: 10,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+  }
 });
 
 export default ConversationScreen;
