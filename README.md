@@ -62,22 +62,21 @@ Développement complet d’une application mobile type **Snapchat / BeReal**, ba
 git clone https://github.com/ayng1004/snapshoot.git
 cd Snapshoot
 2️⃣ Lancer les microservices avec Docker
-bash
+
 docker-compose build --no-cache
 docker-compose up
+
 3️⃣ Configurer l'adresse IP de l'API pour l'application mobile
 Ouvrez le fichier suivant :
 
-bash
 client/src/config/api.js
 Modifiez l'adresse IP pour pointer vers votre machine locale (exemple : 192.168.1.42) :
 
-javascript
 export const SERVER_IP = '192.168.1.X:8080';
 ⚠ Important : utilisez l’adresse IP locale de votre réseau WiFi, visible depuis votre smartphone.
 
 4️⃣ Lancer l’application mobile avec Expo
-bash
+
 npm install -g expo-cli
 npx expo start
 Scannez le QR Code avec l'application Expo Go sur votre smartphone.
